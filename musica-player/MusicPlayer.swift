@@ -1369,21 +1369,18 @@ class MusicPlayer: NSObject, ObservableObject {
         // This is before normalization, so we get the actual energy level
         let rawMonoEnergy = (leftLevel + rightLevel) / 2.0
         
-        // Normalize energy for beat detection to be independent of volume
-        // The volume is applied in playerNode, so we need to compensate for it
-        // If volume is 0, we can't detect beats, but if volume is low, we still want to detect
-        let normalizedEnergyForBeatDetection: Float
-        if volume > 0.01 { // Avoid division by zero
-            // Normalize by dividing by volume to get the "original" energy level
-            normalizedEnergyForBeatDetection = rawMonoEnergy / volume
-        } else {
-            normalizedEnergyForBeatDetection = 0.0
-        }
+        // For beat detection, we want to use the raw energy but scale it appropriately
+        // The volume affects the actual output, but for beat detection we want to detect
+        // the rhythm regardless of volume level. However, we need to account for the fact
+        // that lower volumes will have lower energy values.
+        // Instead of dividing by volume (which can cause issues), we'll use the raw energy
+        // and let the dynamic threshold handle volume variations
+        let energyForBeatDetection = rawMonoEnergy
         
         // Apply smoothing to energy (similar to VU meters) to avoid false positives
-        smoothedEnergy = smoothedEnergy * beatSmoothingFactor + normalizedEnergyForBeatDetection * (1 - beatSmoothingFactor)
+        smoothedEnergy = smoothedEnergy * beatSmoothingFactor + energyForBeatDetection * (1 - beatSmoothingFactor)
         
-        // Real-time beat detection using smoothed energy (volume-independent)
+        // Real-time beat detection using smoothed energy
         detectBeat(energy: smoothedEnergy)
         
         // Apply smoothing and normalize to 0-1 range
@@ -1408,7 +1405,15 @@ class MusicPlayer: NSObject, ObservableObject {
     }
     
     private func detectBeat(energy: Float) {
+        // Only detect beats when playing
+        guard isPlaying else { return }
+        
         let currentTime = Date().timeIntervalSince1970
+        
+        // Initialize lastBeatDetectionTime if it's the first time
+        if lastBeatDetectionTime == 0 {
+            lastBeatDetectionTime = currentTime
+        }
         
         // Add smoothed energy to history
         recentEnergyValues.append(energy)
@@ -1422,8 +1427,9 @@ class MusicPlayer: NSObject, ObservableObject {
         // Calculate average energy (using a longer window for stability)
         averageEnergy = recentEnergyValues.reduce(0, +) / Float(recentEnergyValues.count)
         
-        // Only detect beats if we have meaningful audio (similar to VU meters threshold)
-        // Use a lower threshold since we're now working with normalized energy
+        // Only detect beats if we have meaningful audio
+        // For raw energy values (typically 0.0-0.3), use a very low threshold
+        // The default beatMinEnergyThreshold (0.001) should work for most cases
         guard averageEnergy > beatMinEnergyThreshold else { return }
         
         // Calculate variance to determine dynamic threshold
@@ -1461,7 +1467,7 @@ class MusicPlayer: NSObject, ObservableObject {
             
             // Trigger beat indicator
             DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
+                guard let self = self, self.isPlaying else { return }
                 self.beatDetected = true
                 
                 // Turn off after a short duration

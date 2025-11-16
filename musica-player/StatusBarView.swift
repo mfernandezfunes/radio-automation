@@ -48,16 +48,16 @@ struct StatusBarView: View {
             
             // Current Time and buttons
             VStack(alignment: .center, spacing: 8) {
-                // AutoPlay toggle button
-                if let player1 = player1, let player2 = player2 {
-                    AutoPlayToggleButton(player1: player1, player2: player2)
-                }
-                
                 Text(currentTime, style: .time)
                     .font(.system(.title2, design: .monospaced))
                     .fontWeight(.medium)
                 
                 HStack(spacing: 12) {
+                    // AutoPlay toggle button
+                    if let player1 = player1, let player2 = player2 {
+                        AutoPlayToggleButton(player1: player1, player2: player2)
+                    }
+                    
                     Button(action: {
                         onAutoArrange?()
                     }) {

@@ -215,6 +215,25 @@ struct PlayerView: View {
         VStack(spacing: 0) {
             // Player controls - fixed size
             VStack(spacing: 12) {
+                // Current song info - large and prominent
+                if let currentSong = playlist.currentSong {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(currentSong.title)
+                            .font(.system(size: 24, weight: .bold, design: .default))
+                            .foregroundColor(.primary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        
+                        Text(currentSong.artist)
+                            .font(.system(size: 18, weight: .semibold, design: .default))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                }
+                
                 // Advanced playback controls
                 VStack(spacing: 12) {
                     // Main playback controls with VU meters

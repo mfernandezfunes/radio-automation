@@ -520,6 +520,80 @@ struct ConfigView: View {
                 .font(.headline)
                 .fontWeight(.semibold)
             
+            // Compressor
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Toggle("Compresor", isOn: Binding(
+                        get: { player.compressorEnabled },
+                        set: { player.compressorEnabled = $0 }
+                    ))
+                    Spacer()
+                }
+                
+                if player.compressorEnabled {
+                    VStack(spacing: 8) {
+                        HStack {
+                            Text("Threshold")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(String(format: "%.1f dB", player.compressorThreshold))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Slider(value: Binding(
+                            get: { player.compressorThreshold },
+                            set: { player.compressorThreshold = $0 }
+                        ), in: -40...0)
+                        
+                        HStack {
+                            Text("Ratio")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(String(format: "%.1f:1", player.compressorRatio))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Slider(value: Binding(
+                            get: { player.compressorRatio },
+                            set: { player.compressorRatio = $0 }
+                        ), in: 1...20)
+                        
+                        HStack {
+                            Text("Attack")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(String(format: "%.3fs", player.compressorAttack))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Slider(value: Binding(
+                            get: { player.compressorAttack },
+                            set: { player.compressorAttack = $0 }
+                        ), in: 0.0001...0.1)
+                        
+                        HStack {
+                            Text("Release")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(String(format: "%.3fs", player.compressorRelease))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Slider(value: Binding(
+                            get: { player.compressorRelease },
+                            set: { player.compressorRelease = $0 }
+                        ), in: 0.01...1.0)
+                    }
+                }
+            }
+            .padding()
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+            .cornerRadius(6)
+            
             // Reverb
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
