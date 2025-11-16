@@ -52,6 +52,39 @@ class MusicPlayer: NSObject, ObservableObject {
     @Published var detectedBPM: Double? = nil // Detected beats per minute
     @Published var beatDetected: Bool = false // Real-time beat detection
     
+    // BPM Detection Parameters
+    @Published var bpmDetectionThreshold: Float = 0.3 // Threshold for peak detection (0.0-1.0)
+    @Published var bpmMinInterval: TimeInterval = 0.2 // Minimum time between beats (300 BPM max)
+    @Published var bpmMaxInterval: TimeInterval = 2.0 // Maximum time between beats (30 BPM min)
+    @Published var bpmMinBPM: Double = 30.0 // Minimum valid BPM
+    @Published var bpmMaxBPM: Double = 300.0 // Maximum valid BPM
+    @Published var bpmSmoothingWindow: Int = 5 // Window size for energy smoothing
+    
+    // Real-time Beat Detection Parameters
+    @Published var beatSmoothingFactor: Float = 0.85 // Smoothing factor for energy (0.0-1.0)
+    @Published var beatMinRelativeIncrease: Float = 0.15 // Minimum relative energy increase (0.0-1.0)
+    @Published var beatStdDevMultiplier: Float = 1.5 // Standard deviation multiplier for threshold
+    @Published var beatMinThresholdMultiplier: Float = 1.15 // Minimum threshold multiplier above average
+    @Published var beatMinEnergyThreshold: Float = 0.001 // Minimum energy threshold
+    
+    // Playback controls
+    @Published var playbackRate: Float = 1.0 { // 0.5x to 2.0x speed
+        didSet {
+            updatePlaybackRate()
+        }
+    }
+    @Published var stereoBalance: Float = 0.0 { // -1.0 (left) to 1.0 (right), 0.0 = center
+        didSet {
+            updateStereoBalance()
+        }
+    }
+    @Published var crossfadeEnabled: Bool = false
+    @Published var crossfadeDuration: TimeInterval = 5.0 // seconds
+    @Published var fadeInEnabled: Bool = false
+    @Published var fadeInDuration: TimeInterval = 2.0 // seconds
+    @Published var fadeOutEnabled: Bool = false
+    @Published var fadeOutDuration: TimeInterval = 2.0 // seconds
+    
     private let seekInterval: TimeInterval = 10.0 // 10 seconds for rewind/fast forward
     
     // AVAudioEngine components
@@ -65,6 +98,8 @@ class MusicPlayer: NSObject, ObservableObject {
     private var reverbUnit: AVAudioUnitReverb?
     private var delayUnit: AVAudioUnitDelay?
     private var equalizerUnit: AVAudioUnitEQ?
+    private var varispeedUnit: AVAudioUnitVarispeed? // For playback rate control
+    private var mixerNode: AVAudioMixerNode? // For stereo balance
     
     // Audio routing
     private var effectChain: [AVAudioNode] = []
@@ -81,8 +116,6 @@ class MusicPlayer: NSObject, ObservableObject {
     private var beatTimes: [TimeInterval] = []
     private var lastBeatTime: TimeInterval = 0
     private let maxHistorySize = 1000 // Keep last 1000 energy values
-    private let minBeatInterval: TimeInterval = 0.2 // Minimum time between beats (300 BPM max)
-    private let maxBeatInterval: TimeInterval = 2.0 // Maximum time between beats (30 BPM min)
     
     // Real-time beat detection
     private var recentEnergyValues: [Float] = []
@@ -90,7 +123,6 @@ class MusicPlayer: NSObject, ObservableObject {
     private var averageEnergy: Float = 0.0
     private var smoothedEnergy: Float = 0.0 // Smoothed energy for beat detection
     private let energyHistorySize = 43 // Keep last 43 values (~1 second at 44.1kHz with 1024 buffer)
-    private let smoothingFactor: Float = 0.85 // Similar to VU meters but slightly more responsive
     
     var playlist: Playlist
     
@@ -117,6 +149,8 @@ class MusicPlayer: NSObject, ObservableObject {
     
     deinit {
         stopPlaybackTimer()
+        fadeInTimer?.invalidate()
+        fadeOutTimer?.invalidate()
         stopAudioEngine()
         
         // Release file access when destroying the player
@@ -152,6 +186,16 @@ class MusicPlayer: NSObject, ObservableObject {
         // Create and attach all effect units (always connected)
         // They will be controlled via parameters, not by adding/removing from chain
         
+        // Varispeed unit for playback rate control
+        let varispeed = AVAudioUnitVarispeed()
+        audioEngine.attach(varispeed)
+        varispeedUnit = varispeed
+        
+        // Create a mixer node for stereo balance control
+        let mixer = AVAudioMixerNode()
+        audioEngine.attach(mixer)
+        mixerNode = mixer
+        
         // Delay unit
         let delay = AVAudioUnitDelay()
         audioEngine.attach(delay)
@@ -167,17 +211,21 @@ class MusicPlayer: NSObject, ObservableObject {
         audioEngine.attach(eq)
         equalizerUnit = eq
         
-        // Connect: player -> delay -> reverb -> eq -> mixer
+        // Connect: player -> varispeed -> delay -> reverb -> eq -> mixer -> mainMixer
         // Always connected, effects controlled via wet/dry mix
-        audioEngine.connect(playerNode, to: delay, format: nil)
+        audioEngine.connect(playerNode, to: varispeed, format: nil)
+        audioEngine.connect(varispeed, to: delay, format: nil)
         audioEngine.connect(delay, to: reverb, format: nil)
         audioEngine.connect(reverb, to: eq, format: nil)
-        audioEngine.connect(eq, to: audioEngine.mainMixerNode, format: nil)
+        audioEngine.connect(eq, to: mixer, format: nil)
+        audioEngine.connect(mixer, to: audioEngine.mainMixerNode, format: nil)
         
         // Initialize effect parameters
         configureDelay(delay)
         configureReverb(reverb)
         configureEqualizer(eq)
+        updatePlaybackRate()
+        updateStereoBalance()
         
         // Set initial wet/dry mix based on enabled state
         updateEffectStates()
@@ -631,6 +679,11 @@ class MusicPlayer: NSObject, ObservableObject {
         // Start time tracking
         startTime = Date().addingTimeInterval(-pausedTime)
         startPlaybackTimer()
+        
+        // Apply fade in if enabled
+        if pausedTime == 0 { // Only fade in when starting from beginning
+            applyFadeIn()
+        }
     }
     
     func pause() {
@@ -778,21 +831,26 @@ class MusicPlayer: NSObject, ObservableObject {
         currentTime = duration
         pausedTime = 0
         
-        // Handle repeat mode
-        if playlist.repeatMode == .one {
-            // Repeat current song
-            loadCurrentSong()
-            play()
-        } else if autoPlayNext {
-            // Automatically play next song if auto-play is enabled
-            if let nextSong = playlist.nextSong() {
-                loadCurrentSong()
-                play()
+        // Apply fade out before transitioning
+        applyFadeOut { [weak self] in
+            guard let self = self else { return }
+            
+            // Handle repeat mode
+            if self.playlist.repeatMode == .one {
+                // Repeat current song
+                self.loadCurrentSong()
+                self.play()
+            } else if self.autoPlayNext || self.crossfadeEnabled {
+                // Automatically play next song if auto-play or crossfade is enabled
+                if let nextSong = self.playlist.nextSong() {
+                    self.loadCurrentSong()
+                    self.play()
+                } else {
+                    self.stop()
+                }
             } else {
-                stop()
+                self.stop()
             }
-        } else {
-            stop()
         }
     }
     
@@ -838,7 +896,7 @@ class MusicPlayer: NSObject, ObservableObject {
     
     // MARK: - Beat Detection
     
-    private func analyzeBPM(for file: AVAudioFile) {
+    func analyzeBPM(for file: AVAudioFile) {
         // Analyze audio file in background to detect BPM
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
@@ -901,7 +959,7 @@ class MusicPlayer: NSObject, ObservableObject {
         guard energyValues.count > 10 else { return nil }
         
         // Calculate local energy average
-        let windowSize = 5
+        let windowSize = bpmSmoothingWindow
         var smoothedEnergy: [Float] = []
         
         for i in 0..<energyValues.count {
@@ -916,7 +974,7 @@ class MusicPlayer: NSObject, ObservableObject {
         var beatIntervals: [Double] = []
         var lastPeakIndex = 0
         let maxEnergy = smoothedEnergy.max() ?? 0
-        let threshold = maxEnergy * 0.3 // 30% of max energy
+        let threshold = maxEnergy * bpmDetectionThreshold
         
         for i in 1..<(smoothedEnergy.count - 1) {
             if smoothedEnergy[i] > smoothedEnergy[i-1] &&
@@ -925,7 +983,7 @@ class MusicPlayer: NSObject, ObservableObject {
                 
                 if lastPeakIndex > 0 {
                     let interval = Double(i - lastPeakIndex) * Double(bufferSize) / sampleRate
-                    if interval >= minBeatInterval && interval <= maxBeatInterval {
+                    if interval >= bpmMinInterval && interval <= bpmMaxInterval {
                         beatIntervals.append(interval)
                     }
                 }
@@ -939,8 +997,8 @@ class MusicPlayer: NSObject, ObservableObject {
         let averageInterval = beatIntervals.reduce(0, +) / Double(beatIntervals.count)
         let bpm = 60.0 / averageInterval
         
-        // Validate BPM range (30-300 BPM)
-        guard bpm >= 30 && bpm <= 300 else { return nil }
+        // Validate BPM range
+        guard bpm >= bpmMinBPM && bpm <= bpmMaxBPM else { return nil }
         
         return bpm
     }
@@ -1014,7 +1072,7 @@ class MusicPlayer: NSObject, ObservableObject {
         }
         
         // Apply smoothing to energy (similar to VU meters) to avoid false positives
-        smoothedEnergy = smoothedEnergy * smoothingFactor + normalizedEnergyForBeatDetection * (1 - smoothingFactor)
+        smoothedEnergy = smoothedEnergy * beatSmoothingFactor + normalizedEnergyForBeatDetection * (1 - beatSmoothingFactor)
         
         // Real-time beat detection using smoothed energy (volume-independent)
         detectBeat(energy: smoothedEnergy)
@@ -1057,7 +1115,7 @@ class MusicPlayer: NSObject, ObservableObject {
         
         // Only detect beats if we have meaningful audio (similar to VU meters threshold)
         // Use a lower threshold since we're now working with normalized energy
-        guard averageEnergy > 0.001 else { return } // Minimum energy threshold (lower because it's normalized)
+        guard averageEnergy > beatMinEnergyThreshold else { return }
         
         // Calculate variance to determine dynamic threshold
         let variance = recentEnergyValues.map { pow($0 - averageEnergy, 2) }.reduce(0, +) / Float(recentEnergyValues.count)
@@ -1065,10 +1123,10 @@ class MusicPlayer: NSObject, ObservableObject {
         
         // Use a more conservative threshold to avoid saturation
         // Higher multiplier means less sensitive (similar to VU meters normalization)
-        let dynamicThreshold = averageEnergy + stdDev * 1.5
+        let dynamicThreshold = averageEnergy + stdDev * beatStdDevMultiplier
         
         // Minimum threshold based on average energy (percentage-based, like VU meters)
-        let minThreshold = averageEnergy * 1.15 // At least 15% above average
+        let minThreshold = averageEnergy * beatMinThresholdMultiplier
         let threshold = max(dynamicThreshold, minThreshold)
         
         // Detect beat if energy exceeds threshold and enough time has passed
@@ -1080,20 +1138,16 @@ class MusicPlayer: NSObject, ObservableObject {
             // Allow beats at up to 2x the detected BPM (for syncopation)
             minInterval = (60.0 / bpm) * 0.5
         } else {
-            // If no BPM detected yet, use a more conservative interval
-            minInterval = 0.2 // Allow beats every 200ms minimum (300 BPM max)
+            // If no BPM detected yet, use configured minimum interval
+            minInterval = bpmMinInterval
         }
         
         // Check if energy spike is significant enough (more conservative)
         let energyIncrease = energy - averageEnergy
         let relativeIncrease = averageEnergy > 0 ? energyIncrease / averageEnergy : 0
         
-        // More conservative detection: requires higher relative increase to avoid saturation
-        // This matches the normalization approach used in VU meters
-        let minRelativeIncrease: Float = 0.15 // At least 15% increase (was 10%)
-        
         // Detect beat: energy exceeds threshold, enough time passed, and significant increase
-        if energy > threshold && timeSinceLastBeat >= minInterval && relativeIncrease > minRelativeIncrease {
+        if energy > threshold && timeSinceLastBeat >= minInterval && relativeIncrease > beatMinRelativeIncrease {
             lastBeatDetectionTime = currentTime
             
             // Trigger beat indicator
@@ -1107,5 +1161,96 @@ class MusicPlayer: NSObject, ObservableObject {
                 }
             }
         }
+    }
+    
+    // MARK: - Playback Controls
+    
+    private func updatePlaybackRate() {
+        varispeedUnit?.rate = playbackRate
+    }
+    
+    private func updateStereoBalance() {
+        // Stereo balance: -1.0 (left) to 1.0 (right), 0.0 = center
+        // AVAudioMixerNode pan property ranges from -1.0 (left) to 1.0 (right)
+        mixerNode?.pan = stereoBalance
+    }
+    
+    // MARK: - Fade and Crossfade
+    
+    private var fadeInTimer: Timer?
+    private var fadeOutTimer: Timer?
+    
+    private func applyFadeIn() {
+        guard fadeInEnabled, fadeInDuration > 0 else { return }
+        
+        // Cancel any existing fade timers
+        fadeInTimer?.invalidate()
+        fadeOutTimer?.invalidate()
+        
+        // Store target volume before starting fade
+        let targetVolume = volume
+        
+        // Start volume at 0 and fade in over fadeInDuration
+        volume = 0.0
+        
+        let steps = 30 // Number of fade steps
+        let stepDuration = fadeInDuration / Double(steps)
+        let volumeStep = targetVolume / Float(steps)
+        
+        var currentStep = 0
+        fadeInTimer = Timer.scheduledTimer(withTimeInterval: stepDuration, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            
+            currentStep += 1
+            let newVolume = min(volumeStep * Float(currentStep), targetVolume)
+            self.volume = newVolume
+            
+            if currentStep >= steps {
+                self.volume = targetVolume
+                timer.invalidate()
+                self.fadeInTimer = nil
+            }
+        }
+        RunLoop.current.add(fadeInTimer!, forMode: .common)
+    }
+    
+    private func applyFadeOut(completion: @escaping () -> Void) {
+        guard fadeOutEnabled, fadeOutDuration > 0 else {
+            completion()
+            return
+        }
+        
+        // Cancel any existing fade timers
+        fadeInTimer?.invalidate()
+        fadeOutTimer?.invalidate()
+        
+        let startVolume = volume
+        let steps = 30 // Number of fade steps
+        let stepDuration = fadeOutDuration / Double(steps)
+        let volumeStep = startVolume / Float(steps)
+        
+        var currentStep = 0
+        fadeOutTimer = Timer.scheduledTimer(withTimeInterval: stepDuration, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                completion()
+                return
+            }
+            
+            currentStep += 1
+            let newVolume = max(startVolume - volumeStep * Float(currentStep), 0.0)
+            self.volume = newVolume
+            
+            if currentStep >= steps {
+                self.volume = 0.0
+                timer.invalidate()
+                self.fadeOutTimer = nil
+                completion()
+            }
+        }
+        RunLoop.current.add(fadeOutTimer!, forMode: .common)
     }
 }

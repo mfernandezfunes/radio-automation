@@ -30,7 +30,7 @@ struct musica_playerApp: App {
     
     var body: some Scene {
         // Main window containing everything
-        WindowGroup("Music Player", id: "main") {
+        WindowGroup(id: "main") {
             MainWindowView(
                 playlist1: playlist1,
                 player1: player1,
@@ -38,6 +38,7 @@ struct musica_playerApp: App {
                 player2: player2
             )
         }
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1200, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) {}

@@ -14,14 +14,11 @@ struct PlayerStatusView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Player name and status indicator
+            // Status indicator
             HStack(spacing: 8) {
                 Circle()
                     .fill(player.isPlaying ? Color.green : (playlist.currentSong != nil ? Color.orange : Color.gray))
                     .frame(width: 10, height: 10)
-                Text(playerName)
-                    .font(.headline)
-                    .fontWeight(.semibold)
             }
             
             // Song title and artist
