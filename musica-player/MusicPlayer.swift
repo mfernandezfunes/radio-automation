@@ -19,7 +19,7 @@ class MusicPlayer: NSObject, ObservableObject {
         }
     }
     
-    @Published var vuMeterSensitivity: Float = 2.5 // Sensitivity scale factor for VU meters (1.0 - 5.0)
+    @Published var vuMeterSensitivity: Float = 1.1 // Sensitivity scale factor for VU meters (1.0 - 5.0)
     
     @Published var autoPlayNext: Bool = false // Auto-continue to next song when current finishes
     @Published var leftLevel: Float = 0.0
