@@ -16,6 +16,9 @@ struct PlayerView: View {
     @State private var showingFilePicker = false
     @State private var blinkOpacity: Double = 1.0
     @State private var blinkTimer: Timer?
+    @State private var sliderValue: Double = 0
+    @State private var isDraggingSlider: Bool = false
+    @State private var seekTimer: Timer?
     
     let playerName: String
     
@@ -147,84 +150,73 @@ struct PlayerView: View {
         VStack(spacing: 0) {
             // Player controls - fixed size
             VStack(spacing: 12) {
-                // Current song information
-                if let currentSong = playlist.currentSong {
-                    VStack(spacing: 4) {
-                        Text(currentSong.title)
-                            .font(.headline)
-                            .lineLimit(1)
-                        Text(currentSong.artist)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal)
-                } else {
-                    Text("Select a song")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal)
-                }
-                
                 // Advanced playback controls
                 VStack(spacing: 12) {
-                    // Main playback controls
+                    // Main playback controls with VU meters
                     HStack(spacing: 20) {
-                        Button(action: {
-                            player.rewind()
-                        }) {
-                            Image(systemName: "gobackward.10")
-                                .font(.title3)
+                        // Playback controls
+                        HStack(spacing: 20) {
+                            Button(action: {
+                                player.rewind()
+                            }) {
+                                Image(systemName: "gobackward.10")
+                                    .font(.title3)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(playlist.songs.isEmpty || player.duration == 0)
+                            
+                            Button(action: {
+                                player.previous()
+                            }) {
+                                Image(systemName: "backward.fill")
+                                    .font(.title2)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(playlist.songs.isEmpty)
+                            
+                            Button(action: {
+                                player.stop()
+                            }) {
+                                Image(systemName: "stop.fill")
+                                    .font(.title2)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(playlist.songs.isEmpty)
+                            
+                            Button(action: {
+                                player.togglePlayPause()
+                            }) {
+                                Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                                    .font(.system(size: 48))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(playlist.songs.isEmpty)
+                            
+                            Button(action: {
+                                player.next()
+                            }) {
+                                Image(systemName: "forward.fill")
+                                    .font(.title2)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(playlist.songs.isEmpty)
+                            
+                            Button(action: {
+                                player.fastForward()
+                            }) {
+                                Image(systemName: "goforward.10")
+                                    .font(.title3)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(playlist.songs.isEmpty || player.duration == 0)
                         }
-                        .buttonStyle(.plain)
-                        .disabled(playlist.songs.isEmpty || player.duration == 0)
+                        .padding(.vertical, 8)
                         
-                        Button(action: {
-                            player.previous()
-                        }) {
-                            Image(systemName: "backward.fill")
-                                .font(.title2)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(playlist.songs.isEmpty)
+                        Spacer()
                         
-                        Button(action: {
-                            player.stop()
-                        }) {
-                            Image(systemName: "stop.fill")
-                                .font(.title2)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(playlist.songs.isEmpty)
-                        
-                        Button(action: {
-                            player.togglePlayPause()
-                        }) {
-                            Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                .font(.system(size: 48))
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(playlist.songs.isEmpty)
-                        
-                        Button(action: {
-                            player.next()
-                        }) {
-                            Image(systemName: "forward.fill")
-                                .font(.title2)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(playlist.songs.isEmpty)
-                        
-                        Button(action: {
-                            player.fastForward()
-                        }) {
-                            Image(systemName: "goforward.10")
-                                .font(.title3)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(playlist.songs.isEmpty || player.duration == 0)
+                        // VU Meters - always visible on the right
+                        VUMeterView(leftLevel: player.leftLevel, rightLevel: player.rightLevel)
+                            .frame(height: 120)
                     }
                     .padding(.vertical, 8)
                     
@@ -287,13 +279,30 @@ struct PlayerView: View {
                         VStack(spacing: 4) {
                             Slider(
                                 value: Binding(
-                                    get: { player.currentTime },
-                                    set: { player.seek(to: $0) }
+                                    get: { isDraggingSlider ? sliderValue : player.currentTime },
+                                    set: { newValue in
+                                        sliderValue = newValue
+                                        if !isDraggingSlider {
+                                            isDraggingSlider = true
+                                        }
+                                        
+                                        // Cancel previous seek timer
+                                        seekTimer?.invalidate()
+                                        
+                                        // Schedule seek after user stops dragging (debounce)
+                                        let timerValue = sliderValue
+                                        seekTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { timer in
+                                            isDraggingSlider = false
+                                            player.seek(to: timerValue)
+                                            timer.invalidate()
+                                        }
+                                        RunLoop.current.add(seekTimer!, forMode: .common)
+                                    }
                                 ),
                                 in: 0...player.duration
                             )
                             HStack {
-                                Text(player.formatTime(player.currentTime))
+                                Text(player.formatTime(isDraggingSlider ? sliderValue : player.currentTime))
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                 Spacer()
@@ -444,7 +453,12 @@ struct PlayerView: View {
             }
         }
         .frame(minWidth: 500, minHeight: 700)
-        .onChange(of: player.currentTime) { _ in
+        .onChange(of: player.currentTime) { newTime in
+            // Update slider value when not dragging
+            if !isDraggingSlider {
+                sliderValue = newTime
+            }
+            // Update blink state
             updateBlinkState()
         }
         .onChange(of: player.isPlaying) { isPlaying in
@@ -459,6 +473,7 @@ struct PlayerView: View {
         }
         .onDisappear {
             stopBlinking()
+            seekTimer?.invalidate()
         }
         .fileImporter(
             isPresented: $showingFilePicker,
