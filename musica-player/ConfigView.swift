@@ -844,39 +844,49 @@ struct ConfigView: View {
                 }
                 
                 if player.equalizerEnabled {
-                    HStack(spacing: 20) {
-                        KnobView(
-                            value: Binding(
-                                get: { player.equalizerLowGain },
-                                set: { player.equalizerLowGain = $0 }
-                            ),
-                            range: -12...12,
-                            label: "Bajos",
-                            unit: "dB"
-                        )
+                    VStack(spacing: 8) {
+                        HStack {
+                            Text("Bajos")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(String(format: "%.1f dB", player.equalizerLowGain))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Slider(value: Binding(
+                            get: { player.equalizerLowGain },
+                            set: { player.equalizerLowGain = $0 }
+                        ), in: -12...12)
                         
-                        KnobView(
-                            value: Binding(
-                                get: { player.equalizerMidGain },
-                                set: { player.equalizerMidGain = $0 }
-                            ),
-                            range: -12...12,
-                            label: "Medios",
-                            unit: "dB"
-                        )
+                        HStack {
+                            Text("Medios")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(String(format: "%.1f dB", player.equalizerMidGain))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Slider(value: Binding(
+                            get: { player.equalizerMidGain },
+                            set: { player.equalizerMidGain = $0 }
+                        ), in: -12...12)
                         
-                        KnobView(
-                            value: Binding(
-                                get: { player.equalizerHighGain },
-                                set: { player.equalizerHighGain = $0 }
-                            ),
-                            range: -12...12,
-                            label: "Agudos",
-                            unit: "dB"
-                        )
+                        HStack {
+                            Text("Agudos")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(String(format: "%.1f dB", player.equalizerHighGain))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Slider(value: Binding(
+                            get: { player.equalizerHighGain },
+                            set: { player.equalizerHighGain = $0 }
+                        ), in: -12...12)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
                 }
             }
             .padding()

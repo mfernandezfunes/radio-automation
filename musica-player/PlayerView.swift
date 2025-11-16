@@ -338,7 +338,7 @@ struct PlayerView: View {
                     }
                     .padding(.vertical, 8)
                     
-                    // Shuffle, Repeat, and Auto-play controls
+                    // Shuffle, Repeat, Auto-play, and Crossfade controls
                     HStack(spacing: 30) {
                         Button(action: {
                             playlist.toggleShuffle()
@@ -390,6 +390,24 @@ struct PlayerView: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(playlist.songs.isEmpty)
+                        
+                        Button(action: {
+                            player.crossfadeEnabled.toggle()
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "waveform.path")
+                                    .font(.body)
+                                if player.crossfadeEnabled {
+                                    Text("XFADE")
+                                        .font(.caption2)
+                                        .fontWeight(.bold)
+                                }
+                            }
+                            .foregroundColor(player.crossfadeEnabled ? .accentColor : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(playlist.songs.isEmpty)
+                        .help("Crossfade: funde automáticamente entre canciones (\(String(format: "%.1f", player.crossfadeDuration))s)")
                     }
                     
                     // Progress bar - moved below controls

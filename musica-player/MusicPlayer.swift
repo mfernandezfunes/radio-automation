@@ -21,6 +21,8 @@ class MusicPlayer: NSObject, ObservableObject {
         }
     }
     
+    private var targetVolumeBeforeCrossfade: Float = 0.5 // Store volume before crossfade starts
+    
     @Published var vuMeterSensitivity: Float = 1.1 // Sensitivity scale factor for VU meters (1.0 - 5.0)
     
     @Published var autoPlayNext: Bool = false // Auto-continue to next song when current finishes
@@ -956,8 +958,8 @@ class MusicPlayer: NSObject, ObservableObject {
         startTime = Date().addingTimeInterval(-pausedTime)
         startPlaybackTimer()
         
-        // Apply fade in if enabled
-        if pausedTime == 0 { // Only fade in when starting from beginning
+        // Apply fade in if enabled (but not if crossfade is enabled, crossfade handles its own fade in)
+        if pausedTime == 0 && !crossfadeEnabled { // Only fade in when starting from beginning and crossfade is not enabled
             applyFadeIn()
         }
     }
@@ -1149,65 +1151,91 @@ class MusicPlayer: NSObject, ObservableObject {
             return
         }
         
-        // Apply fade out before transitioning
-        applyFadeOut { [weak self] in
-            guard let self = self else { return }
-            
-            // Handle repeat mode
-            if self.playlist.repeatMode == .one {
-                // Repeat current song
-                self.loadCurrentSong()
-                self.play()
-            } else if self.autoPlayNext || self.crossfadeEnabled {
-                // Automatically play next item if auto-play or crossfade is enabled
-                if let nextItem = self.playlist.nextItem() {
-                    if nextItem.isCommand {
-                        // Execute command - nextItem() already advanced the index to the command
-                        let command = nextItem.command!
-                        let commandStopsCurrentPlayer = self.willCommandStopCurrentPlayer(command)
-                        
-                        self.executeCommand(command)
-                        
-                        // After executing command, check what's next and preload if it's an audio
-                        if let itemAfterCommand = self.playlist.peekNextItem() {
-                            if !itemAfterCommand.isCommand, let nextSong = itemAfterCommand.song {
-                                // Preload the next audio file
-                                self.preloadSong(nextSong)
-                            }
-                            // If it's a command, it will be executed when we process next item
+        // Apply fade out before transitioning (only if fadeOutEnabled, not for crossfade)
+        if fadeOutEnabled {
+            applyFadeOut { [weak self] in
+                guard let self = self else { return }
+                self.handleSongTransition()
+            }
+        } else {
+            // No fade out, handle transition immediately
+            handleSongTransition()
+        }
+    }
+    
+    private func handleSongTransition() {
+        // Handle repeat mode
+        if playlist.repeatMode == .one {
+            // Repeat current song
+            loadCurrentSong()
+            play()
+            // Apply crossfade fade in if enabled
+            if crossfadeEnabled {
+                applyCrossfadeFadeIn()
+            } else if fadeInEnabled {
+                applyFadeIn()
+            }
+        } else if autoPlayNext || crossfadeEnabled {
+            // Automatically play next item if auto-play or crossfade is enabled
+            if let nextItem = playlist.nextItem() {
+                if nextItem.isCommand {
+                    // Execute command - nextItem() already advanced the index to the command
+                    let command = nextItem.command!
+                    let commandStopsCurrentPlayer = willCommandStopCurrentPlayer(command)
+                    
+                    executeCommand(command)
+                    
+                    // After executing command, check what's next and preload if it's an audio
+                    if let itemAfterCommand = playlist.peekNextItem() {
+                        if !itemAfterCommand.isCommand, let nextSong = itemAfterCommand.song {
+                            // Preload the next audio file
+                            preloadSong(nextSong)
                         }
-                        
-                        // Only continue processing if the command didn't stop the current player
-                        // Commands like stopPlayer1AndPlayNextInPlayer2 stop the current player,
-                        // so we shouldn't continue processing in this player
-                        if !commandStopsCurrentPlayer {
-                            // After command execution, process the next item (which may be another command or song)
-                            // The index is already at the command, so we need to advance to the next item
-                            if let itemAfterCommand = self.playlist.nextItem() {
-                                if itemAfterCommand.isCommand {
-                                    // If next is also a command, process it recursively
-                                    self.processNextItem(for: self)
-                                } else {
-                                    // Load and play next song
-                                    self.loadCurrentSong()
-                                    self.play()
-                                }
-                            } else {
-                                self.stop()
-                            }
-                        }
-                        // If command stopped current player, do nothing (command already handled the transition)
-                    } else {
-                        // Play next song
-                        self.loadCurrentSong()
-                        self.play()
+                        // If it's a command, it will be executed when we process next item
                     }
+                    
+                    // Only continue processing if the command didn't stop the current player
+                    // Commands like stopPlayer1AndPlayNextInPlayer2 stop the current player,
+                    // so we shouldn't continue processing in this player
+                    if !commandStopsCurrentPlayer {
+                        // After command execution, process the next item (which may be another command or song)
+                        // The index is already at the command, so we need to advance to the next item
+                        if let itemAfterCommand = playlist.nextItem() {
+                            if itemAfterCommand.isCommand {
+                                // If next is also a command, process it recursively
+                                processNextItem(for: self)
+                            } else {
+                                // Load and play next song
+                                loadCurrentSong()
+                                play()
+                                // Apply crossfade fade in if enabled
+                                if crossfadeEnabled {
+                                    applyCrossfadeFadeIn()
+                                } else if fadeInEnabled {
+                                    applyFadeIn()
+                                }
+                            }
+                        } else {
+                            stop()
+                        }
+                    }
+                    // If command stopped current player, do nothing (command already handled the transition)
                 } else {
-                    self.stop()
+                    // Play next song
+                    loadCurrentSong()
+                    play()
+                    // Apply crossfade fade in if enabled
+                    if crossfadeEnabled {
+                        applyCrossfadeFadeIn()
+                    } else if fadeInEnabled {
+                        applyFadeIn()
+                    }
                 }
             } else {
-                self.stop()
+                stop()
             }
+        } else {
+            stop()
         }
     }
     
@@ -1370,6 +1398,15 @@ class MusicPlayer: NSObject, ObservableObject {
         let newTime = min(max(elapsed, 0), duration)
         currentTime = newTime
         pausedTime = newTime
+        
+        // Check if we should start crossfade fade out
+        if crossfadeEnabled && fadeOutTimer == nil {
+            let timeRemaining = duration - newTime
+            if timeRemaining <= crossfadeDuration && timeRemaining > 0 {
+                // Start fade out for crossfade
+                applyCrossfadeFadeOut()
+            }
+        }
     }
     
     // MARK: - Beat Detection
@@ -2249,5 +2286,79 @@ class MusicPlayer: NSObject, ObservableObject {
             }
         }
         RunLoop.current.add(fadeOutTimer!, forMode: .common)
+    }
+    
+    // Crossfade fade out - used when crossfade is enabled
+    private func applyCrossfadeFadeOut() {
+        guard crossfadeEnabled, crossfadeDuration > 0, fadeOutTimer == nil else { return }
+        
+        // Cancel any existing fade timers
+        fadeInTimer?.invalidate()
+        fadeOutTimer?.invalidate()
+        
+        // Store target volume before starting fade out (so we can restore it in fade in)
+        targetVolumeBeforeCrossfade = volume
+        
+        let startVolume = volume
+        let steps = 30 // Number of fade steps
+        let stepDuration = crossfadeDuration / Double(steps)
+        let volumeStep = startVolume / Float(steps)
+        
+        var currentStep = 0
+        fadeOutTimer = Timer.scheduledTimer(withTimeInterval: stepDuration, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            
+            currentStep += 1
+            let newVolume = max(startVolume - volumeStep * Float(currentStep), 0.0)
+            self.volume = newVolume
+            
+            if currentStep >= steps {
+                self.volume = 0.0
+                timer.invalidate()
+                self.fadeOutTimer = nil
+            }
+        }
+        RunLoop.current.add(fadeOutTimer!, forMode: .common)
+    }
+    
+    // Crossfade fade in - used when crossfade is enabled and next song starts
+    private func applyCrossfadeFadeIn() {
+        guard crossfadeEnabled, crossfadeDuration > 0 else { return }
+        
+        // Cancel any existing fade timers
+        fadeInTimer?.invalidate()
+        fadeOutTimer?.invalidate()
+        
+        // Use the stored target volume from before crossfade started
+        let targetVolume = targetVolumeBeforeCrossfade > 0 ? targetVolumeBeforeCrossfade : volume
+        
+        // Start volume at 0 and fade in over crossfadeDuration
+        volume = 0.0
+        
+        let steps = 30 // Number of fade steps
+        let stepDuration = crossfadeDuration / Double(steps)
+        let volumeStep = targetVolume / Float(steps)
+        
+        var currentStep = 0
+        fadeInTimer = Timer.scheduledTimer(withTimeInterval: stepDuration, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            
+            currentStep += 1
+            let newVolume = min(volumeStep * Float(currentStep), targetVolume)
+            self.volume = newVolume
+            
+            if currentStep >= steps {
+                self.volume = targetVolume
+                timer.invalidate()
+                self.fadeInTimer = nil
+            }
+        }
+        RunLoop.current.add(fadeInTimer!, forMode: .common)
     }
 }
