@@ -91,7 +91,10 @@ class MusicPlayer: NSObject, ObservableObject {
     private let audioEngine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private var audioFile: AVAudioFile?
+    private var nextAudioFile: AVAudioFile? // Preloaded next song
+    private var nextPreloadedSongId: UUID? // ID of the preloaded song
     private var currentAccessingURL: URL?
+    private var nextAccessingURL: URL? // Access for next song
     
     // Audio effects units
     private var compressorUnit: AVAudioUnitEffect?
@@ -144,6 +147,34 @@ class MusicPlayer: NSObject, ObservableObject {
             }
             .store(in: &cancellables)
         
+        // Observe nextIndex changes to preload the next song
+        playlist.$nextIndex
+            .sink { [weak self] nextIndex in
+                guard let self = self else { return }
+                
+                // If nextIndex is nil, clear any preloaded files
+                guard let nextIndex = nextIndex,
+                      nextIndex >= 0,
+                      nextIndex < self.playlist.items.count else {
+                    // Clear preloaded files when nextIndex is cleared
+                    if let nextURL = self.nextAccessingURL {
+                        nextURL.stopAccessingSecurityScopedResource()
+                        self.nextAccessingURL = nil
+                    }
+                    self.nextAudioFile = nil
+                    self.nextPreloadedSongId = nil
+                    return
+                }
+                
+                let nextItem = self.playlist.items[nextIndex]
+                // Only preload if it's a song (not a command)
+                if !nextItem.isCommand, let nextSong = nextItem.song {
+                    // Preload the next song without playing it
+                    self.preloadSong(nextSong)
+                }
+            }
+            .store(in: &cancellables)
+        
         // Observe effect changes
         observeEffectChanges()
     }
@@ -158,6 +189,9 @@ class MusicPlayer: NSObject, ObservableObject {
         
         // Release file access when destroying the player
         if let url = currentAccessingURL {
+            url.stopAccessingSecurityScopedResource()
+        }
+        if let url = nextAccessingURL {
             url.stopAccessingSecurityScopedResource()
         }
     }
@@ -555,6 +589,50 @@ class MusicPlayer: NSObject, ObservableObject {
         }
     }
     
+    // Preload a song without stopping current playback or playing it
+    func preloadSong(_ song: Song) {
+        // Release previous next file access if exists
+        if let previousNextURL = nextAccessingURL {
+            previousNextURL.stopAccessingSecurityScopedResource()
+            nextAccessingURL = nil
+        }
+        nextAudioFile = nil
+        nextPreloadedSongId = nil
+        
+        // Get accessible URL using security bookmark
+        guard let accessibleURL = song.accessibleURL() else {
+            return
+        }
+        
+        // Access resource securely
+        guard accessibleURL.startAccessingSecurityScopedResource() else {
+            return
+        }
+        
+        nextAccessingURL = accessibleURL
+        nextPreloadedSongId = song.id
+        
+        // Load audio file in background to prepare it
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else {
+                accessibleURL.stopAccessingSecurityScopedResource()
+                return
+            }
+            
+            do {
+                let file = try AVAudioFile(forReading: accessibleURL)
+                // Store the file for quick access when it becomes current
+                DispatchQueue.main.async {
+                    self.nextAudioFile = file
+                }
+            } catch {
+                accessibleURL.stopAccessingSecurityScopedResource()
+                self.nextAccessingURL = nil
+                self.nextPreloadedSongId = nil
+            }
+        }
+    }
+    
     func loadCurrentSong() {
         guard let song = playlist.currentSong else {
             stop()
@@ -572,6 +650,41 @@ class MusicPlayer: NSObject, ObservableObject {
             previousURL.stopAccessingSecurityScopedResource()
             currentAccessingURL = nil
         }
+        
+        // Check if we already have this file preloaded (compare by song ID)
+        if let preloadedFile = nextAudioFile,
+           let preloadedSongId = nextPreloadedSongId,
+           preloadedSongId == song.id {
+            // Use the preloaded file
+            audioFile = preloadedFile
+            if let nextURL = nextAccessingURL {
+                currentAccessingURL = nextURL
+            }
+            nextAudioFile = nil
+            nextAccessingURL = nil
+            nextPreloadedSongId = nil
+            
+            // Get duration
+            let sampleRate = preloadedFile.processingFormat.sampleRate
+            let frameCount = Double(preloadedFile.length)
+            duration = frameCount / sampleRate
+            
+            // Reset time tracking
+            currentTime = 0
+            pausedTime = 0
+            
+            // Start analyzing for BPM in background
+            analyzeBPM(for: preloadedFile)
+            return
+        }
+        
+        // Release next file access if it's not the current song
+        if let nextURL = nextAccessingURL {
+            nextURL.stopAccessingSecurityScopedResource()
+            nextAccessingURL = nil
+        }
+        nextAudioFile = nil
+        nextPreloadedSongId = nil
         
         // Get accessible URL using security bookmark
         guard let accessibleURL = song.accessibleURL() else {
@@ -839,6 +952,15 @@ class MusicPlayer: NSObject, ObservableObject {
             // Execute command
             executeCommand(currentItem.command!)
             
+            // After executing command, check what's next and preload if it's an audio
+            if let itemAfterCommand = playlist.peekNextItem() {
+                if !itemAfterCommand.isCommand, let nextSong = itemAfterCommand.song {
+                    // Preload the next audio file
+                    preloadSong(nextSong)
+                }
+                // If it's a command, it will be executed when we process next item
+            }
+            
             // Move to next item after command execution
             // The executeCommand may have already advanced the playlist, so check what's next
             if let nextItem = playlist.nextItem() {
@@ -876,6 +998,15 @@ class MusicPlayer: NSObject, ObservableObject {
                         let commandStopsCurrentPlayer = self.willCommandStopCurrentPlayer(command)
                         
                         self.executeCommand(command)
+                        
+                        // After executing command, check what's next and preload if it's an audio
+                        if let itemAfterCommand = self.playlist.peekNextItem() {
+                            if !itemAfterCommand.isCommand, let nextSong = itemAfterCommand.song {
+                                // Preload the next audio file
+                                self.preloadSong(nextSong)
+                            }
+                            // If it's a command, it will be executed when we process next item
+                        }
                         
                         // Only continue processing if the command didn't stop the current player
                         // Commands like stopPlayer1AndPlayNextInPlayer2 stop the current player,
@@ -931,17 +1062,28 @@ class MusicPlayer: NSObject, ObservableObject {
     }
     
     // Helper function to process next item (command or song) for a player
-    func processNextItem(for targetPlayer: MusicPlayer) {
+    func processNextItem(for targetPlayer: MusicPlayer, forcePlay: Bool = false) {
         if let nextItem = targetPlayer.playlist.nextItem() {
             if nextItem.isCommand {
-                // Execute command and continue processing
+                // Execute command
                 targetPlayer.executeCommand(nextItem.command!)
+                
+                // After executing command, check what's next and preload if it's an audio
+                if let itemAfterCommand = targetPlayer.playlist.peekNextItem() {
+                    if !itemAfterCommand.isCommand, let nextSong = itemAfterCommand.song {
+                        // Preload the next audio file
+                        targetPlayer.preloadSong(nextSong)
+                    }
+                    // If it's a command, it will be executed when we process next item
+                }
+                
                 // Recursively process next item after command
-                processNextItem(for: targetPlayer)
+                processNextItem(for: targetPlayer, forcePlay: forcePlay)
             } else {
                 // Load and play next song
                 targetPlayer.loadCurrentSong()
-                if targetPlayer.autoPlayNext || targetPlayer.crossfadeEnabled {
+                // If forcePlay is true (from command), always play. Otherwise check autoPlayNext/crossfade
+                if forcePlay || targetPlayer.autoPlayNext || targetPlayer.crossfadeEnabled {
                     targetPlayer.play()
                 }
             }
@@ -959,22 +1101,22 @@ class MusicPlayer: NSObject, ObservableObject {
             if isPlayer1 {
                 // Stop self (Player 1) and play next in Player 2
                 stop()
-                processNextItem(for: otherPlayer)
+                processNextItem(for: otherPlayer, forcePlay: true)
             } else if isPlayer2 {
                 // Stop Player 1 and play next in self (Player 2)
                 otherPlayer.stop()
-                processNextItem(for: self)
+                processNextItem(for: self, forcePlay: true)
             }
             
         case .stopPlayer2AndPlayNextInPlayer1:
             if isPlayer1 {
                 // Stop Player 2 and play next in self (Player 1)
                 otherPlayer.stop()
-                processNextItem(for: self)
+                processNextItem(for: self, forcePlay: true)
             } else if isPlayer2 {
                 // Stop self (Player 2) and play next in Player 1
                 stop()
-                processNextItem(for: otherPlayer)
+                processNextItem(for: otherPlayer, forcePlay: true)
             }
             
         case .stopPlayer1:

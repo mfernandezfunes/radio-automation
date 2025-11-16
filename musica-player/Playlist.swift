@@ -242,6 +242,26 @@ class Playlist: ObservableObject {
         return nil
     }
     
+    // Peek at the next item without advancing the index
+    func peekNextItem() -> PlaylistItem? {
+        guard let index = currentIndex, !items.isEmpty else { return nil }
+        
+        // If there's a manually marked next item, return it
+        if let markedNext = nextIndex, markedNext >= 0 && markedNext < items.count {
+            return items[markedNext]
+        }
+        
+        // Otherwise, calculate next normally without changing currentIndex
+        let calculatedNext = index + 1
+        if calculatedNext < items.count {
+            return items[calculatedNext]
+        } else if repeatMode == .all {
+            // Start from beginning
+            return items[0]
+        }
+        return nil
+    }
+    
     func getNextIndex() -> Int? {
         // If there's a manually marked next item, return it
         if let markedNext = nextIndex {

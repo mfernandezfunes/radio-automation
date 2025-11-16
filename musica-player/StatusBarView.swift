@@ -13,11 +13,15 @@ struct StatusBarView: View {
     var onAutoArrange: (() -> Void)? = nil
     var onOpenPlayer1: (() -> Void)? = nil
     var onOpenPlayer2: (() -> Void)? = nil
+    var player1: MusicPlayer? = nil
+    var player2: MusicPlayer? = nil
     
-    init(onAutoArrange: (() -> Void)? = nil, onOpenPlayer1: (() -> Void)? = nil, onOpenPlayer2: (() -> Void)? = nil) {
+    init(onAutoArrange: (() -> Void)? = nil, onOpenPlayer1: (() -> Void)? = nil, onOpenPlayer2: (() -> Void)? = nil, player1: MusicPlayer? = nil, player2: MusicPlayer? = nil) {
         self.onAutoArrange = onAutoArrange
         self.onOpenPlayer1 = onOpenPlayer1
         self.onOpenPlayer2 = onOpenPlayer2
+        self.player1 = player1
+        self.player2 = player2
     }
     
     var body: some View {
@@ -44,6 +48,11 @@ struct StatusBarView: View {
             
             // Current Time and buttons
             VStack(alignment: .center, spacing: 8) {
+                // AutoPlay toggle button
+                if let player1 = player1, let player2 = player2 {
+                    AutoPlayToggleButton(player1: player1, player2: player2)
+                }
+                
                 Text(currentTime, style: .time)
                     .font(.system(.title2, design: .monospaced))
                     .fontWeight(.medium)
@@ -107,6 +116,30 @@ struct StatusBarView: View {
                 currentTime = Date()
             }
         }
+    }
+}
+
+// Helper view to observe player changes
+private struct AutoPlayToggleButton: View {
+    @ObservedObject var player1: MusicPlayer
+    @ObservedObject var player2: MusicPlayer
+    
+    private var isAutoPlayEnabled: Bool {
+        player1.autoPlayNext && player2.autoPlayNext
+    }
+    
+    var body: some View {
+        Button(action: {
+            let newValue = !isAutoPlayEnabled
+            player1.autoPlayNext = newValue
+            player2.autoPlayNext = newValue
+        }) {
+            Image(systemName: isAutoPlayEnabled ? "play.circle.fill" : "play.circle")
+                .font(.title3)
+                .foregroundColor(isAutoPlayEnabled ? .green : .secondary)
+        }
+        .buttonStyle(.plain)
+        .help(isAutoPlayEnabled ? "AutoPlay activado" : "Activar AutoPlay en ambos players")
     }
 }
 

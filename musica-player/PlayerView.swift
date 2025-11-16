@@ -21,6 +21,7 @@ struct PlayerView: View {
     @State private var sliderValue: Double = 0
     @State private var isDraggingSlider: Bool = false
     @State private var seekTimer: Timer?
+    @State private var durationCache: [UUID: TimeInterval] = [:]
     
     let playerName: String
     
@@ -50,13 +51,58 @@ struct PlayerView: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
     
-    // Helper function to get duration from audio file
-    private func getDuration(from url: URL) -> TimeInterval? {
-        let asset = AVAsset(url: url)
-        // AVAsset duration is available synchronously for local files
-        let duration = asset.duration
-        let durationSeconds = CMTimeGetSeconds(duration)
-        return durationSeconds.isFinite ? durationSeconds : nil
+    // Get cached duration or nil if not cached yet
+    private func getCachedDuration(for song: Song) -> TimeInterval? {
+        return durationCache[song.id]
+    }
+    
+    // Load duration asynchronously and cache it
+    private func loadDuration(for song: Song) {
+        // Don't reload if already cached
+        guard durationCache[song.id] == nil else { return }
+        
+        let songId = song.id
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let accessibleURL = song.accessibleURL() else { return }
+            
+            // Ensure we have access to the file
+            let hasAccess = accessibleURL.startAccessingSecurityScopedResource()
+            defer {
+                if hasAccess {
+                    accessibleURL.stopAccessingSecurityScopedResource()
+                }
+            }
+            
+            var duration: TimeInterval?
+            
+            // Try using AVAudioFile first (more reliable for audio files)
+            do {
+                let audioFile = try AVAudioFile(forReading: accessibleURL)
+                let format = audioFile.processingFormat
+                let frameCount = Double(audioFile.length)
+                let sampleRate = format.sampleRate
+                let calculatedDuration = frameCount / sampleRate
+                if calculatedDuration.isFinite && calculatedDuration > 0 {
+                    duration = calculatedDuration
+                }
+            } catch {
+                // Fallback to AVAsset if AVAudioFile fails
+                let asset = AVAsset(url: accessibleURL)
+                let assetDuration = asset.duration
+                let durationSeconds = CMTimeGetSeconds(assetDuration)
+                if durationSeconds.isFinite && durationSeconds > 0 {
+                    duration = durationSeconds
+                }
+            }
+            
+            // Update cache on main thread
+            if let duration = duration {
+                DispatchQueue.main.async { [self] in
+                    self.durationCache[songId] = duration
+                }
+            }
+        }
     }
     
     // Helper function to extract metadata from audio file
@@ -414,9 +460,10 @@ struct PlayerView: View {
                 .padding()
             } else {
                 List {
-                    ForEach(Array(playlist.items.enumerated()), id: \.element.id) { index, item in
+                    ForEach(playlist.items) { item in
+                        let index = playlist.items.firstIndex(where: { $0.id == item.id }) ?? 0
                         let isNextItem = playlist.getNextIndex() == index
-                        let shouldBlink = shouldBlinkNextSong && isNextItem && !item.isCommand
+                        let shouldBlink = shouldBlinkNextSong && isNextItem
                         
                         if item.isCommand, let command = item.command {
                             // Display command item
@@ -471,6 +518,8 @@ struct PlayerView: View {
                             .padding(.horizontal, 8)
                             .padding(.vertical, 6)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .opacity(shouldBlink ? blinkOpacity : 1.0)
+                            .animation(.easeInOut(duration: 0.5), value: blinkOpacity)
                             .background(
                                 playlist.currentIndex == index
                                     ? Color.blue.opacity(0.15)
@@ -623,17 +672,21 @@ struct PlayerView: View {
                                 Spacer()
                                 
                                 // Show duration
-                                if let accessibleURL = song.accessibleURL(),
-                                   let duration = getDuration(from: accessibleURL) {
-                                    Text(formatTime(duration))
-                                        .font(.system(.caption, design: .monospaced))
-                                        .foregroundColor(.secondary)
-                                        .frame(width: 50, alignment: .trailing)
-                                } else {
-                                    Text("--:--")
-                                        .font(.system(.caption, design: .monospaced))
-                                        .foregroundColor(.secondary)
-                                        .frame(width: 50, alignment: .trailing)
+                                Group {
+                                    if let duration = getCachedDuration(for: song) {
+                                        Text(formatTime(duration))
+                                            .font(.system(.caption, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                            .frame(width: 50, alignment: .trailing)
+                                    } else {
+                                        Text("--:--")
+                                            .font(.system(.caption, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                            .frame(width: 50, alignment: .trailing)
+                                            .onAppear {
+                                                loadDuration(for: song)
+                                            }
+                                    }
                                 }
                                 
                                 if playlist.currentIndex == index {

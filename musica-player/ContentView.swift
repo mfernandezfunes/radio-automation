@@ -33,7 +33,9 @@ struct ContentView: View {
             // Top status bar
             StatusBarView(
                 onOpenPlayer1: {},
-                onOpenPlayer2: {}
+                onOpenPlayer2: {},
+                player1: player1,
+                player2: player2
             )
             
             Divider()

@@ -41,7 +41,9 @@ struct MainWindowView: View {
                         if showPlayer2 {
                             autoArrangeTrigger += 1
                         }
-                    }
+                    },
+                    player1: player1,
+                    player2: player2
                 )
                 .zIndex(100)
                 
