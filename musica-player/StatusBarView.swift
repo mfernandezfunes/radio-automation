@@ -58,6 +58,11 @@ struct StatusBarView: View {
                         AutoPlayToggleButton(player1: player1, player2: player2)
                     }
                     
+                    // Silence Detection toggle button (always visible if players exist)
+                    if let player1 = player1, let player2 = player2 {
+                        SilenceDetectionToggleButton(player1: player1, player2: player2)
+                    }
+                    
                     Button(action: {
                         onAutoArrange?()
                     }) {
@@ -140,6 +145,45 @@ private struct AutoPlayToggleButton: View {
         }
         .buttonStyle(.plain)
         .help(isAutoPlayEnabled ? "AutoPlay activado" : "Activar AutoPlay en ambos players")
+    }
+}
+
+// Helper view for silence detection toggle
+private struct SilenceDetectionToggleButton: View {
+    @ObservedObject var player1: MusicPlayer
+    @ObservedObject var player2: MusicPlayer
+    
+    // Show as enabled if at least one player has it enabled (or both)
+    // This makes the button more forgiving and easier to toggle
+    private var isSilenceDetectionEnabled: Bool {
+        player1.silenceDetectionEnabled || player2.silenceDetectionEnabled
+    }
+    
+    var body: some View {
+        Button(action: {
+            // Toggle based on current state
+            // If at least one is enabled, disable both
+            // If both are disabled, enable both
+            let shouldEnable = !isSilenceDetectionEnabled
+            
+            // When enabling, ensure default behavior is auto-stop (not advance)
+            if shouldEnable {
+                // Set default behavior: auto-stop, not advance
+                player1.autoStopOnSilence = true
+                player1.autoPlayFallbackOnSilence = false
+                player2.autoStopOnSilence = true
+                player2.autoPlayFallbackOnSilence = false
+            }
+            
+            player1.silenceDetectionEnabled = shouldEnable
+            player2.silenceDetectionEnabled = shouldEnable
+        }) {
+            Image(systemName: isSilenceDetectionEnabled ? "speaker.slash.fill" : "speaker.slash")
+                .font(.title3)
+                .foregroundColor(isSilenceDetectionEnabled ? .orange : .secondary)
+        }
+        .buttonStyle(.plain)
+        .help(isSilenceDetectionEnabled ? "Detección de silencios activada - Clic para desactivar" : "Activar detección de silencios en ambos players")
     }
 }
 
