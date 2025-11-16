@@ -451,10 +451,13 @@ struct PlayerView: View {
                         .contextMenu {
                             Button(action: {
                                 // Stop current playback and play this song now
-                                player.stop()
+                                // loadCurrentSong() already calls stop() internally
                                 playlist.currentIndex = index
                                 player.loadCurrentSong()
-                                player.play()
+                                // Wait a moment for the file to load before playing
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                    player.play()
+                                }
                             }) {
                                 Label("Parar y Reproducir Ahora", systemImage: "play.fill")
                             }
