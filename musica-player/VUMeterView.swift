@@ -11,6 +11,12 @@ struct VUMeterView: View {
     let leftLevel: Float
     let rightLevel: Float
     let barCount: Int = 20
+    var orientation: Orientation = .vertical
+    
+    enum Orientation {
+        case vertical
+        case horizontal
+    }
     
     private var normalizedLeft: Float {
         min(max(leftLevel, 0), 1)
@@ -21,43 +27,69 @@ struct VUMeterView: View {
     }
     
     var body: some View {
-        HStack(spacing: 4) {
-            // Left channel - vertical bars
-            VStack(spacing: 1) {
-                ForEach((0..<barCount).reversed(), id: \.self) { index in
-                    Rectangle()
-                        .fill(barColor(for: index, level: normalizedLeft))
-                        .frame(width: 8, height: 4)
+        if orientation == .horizontal {
+            // Horizontal layout
+            VStack(spacing: 8) {
+                // Left channel - horizontal LED style
+                HStack(spacing: 2) {
+                    ForEach(0..<barCount, id: \.self) { index in
+                        Circle()
+                            .fill(barColor(for: index, level: normalizedLeft))
+                            .frame(width: 6, height: 6)
+                            .shadow(color: barColor(for: index, level: normalizedLeft).opacity(0.6), radius: normalizedLeft >= Float(index) / Float(barCount) ? 3 : 0)
+                    }
+                }
+                
+                // Right channel - horizontal LED style
+                HStack(spacing: 2) {
+                    ForEach(0..<barCount, id: \.self) { index in
+                        Circle()
+                            .fill(barColor(for: index, level: normalizedRight))
+                            .frame(width: 6, height: 6)
+                            .shadow(color: barColor(for: index, level: normalizedRight).opacity(0.6), radius: normalizedRight >= Float(index) / Float(barCount) ? 3 : 0)
+                    }
                 }
             }
-            .frame(width: 8)
-            
-            // Right channel - vertical bars
-            VStack(spacing: 1) {
-                ForEach((0..<barCount).reversed(), id: \.self) { index in
-                    Rectangle()
-                        .fill(barColor(for: index, level: normalizedRight))
-                        .frame(width: 8, height: 4)
+        } else {
+            // Vertical layout (default)
+            HStack(spacing: 6) {
+                // Left channel - LED style
+                VStack(spacing: 2) {
+                    ForEach((0..<barCount).reversed(), id: \.self) { index in
+                        Circle()
+                            .fill(barColor(for: index, level: normalizedLeft))
+                            .frame(width: 6, height: 6)
+                            .shadow(color: barColor(for: index, level: normalizedLeft).opacity(0.6), radius: normalizedLeft >= Float(index) / Float(barCount) ? 3 : 0)
+                    }
+                }
+                
+                // Right channel - LED style
+                VStack(spacing: 2) {
+                    ForEach((0..<barCount).reversed(), id: \.self) { index in
+                        Circle()
+                            .fill(barColor(for: index, level: normalizedRight))
+                            .frame(width: 6, height: 6)
+                            .shadow(color: barColor(for: index, level: normalizedRight).opacity(0.6), radius: normalizedRight >= Float(index) / Float(barCount) ? 3 : 0)
+                    }
                 }
             }
-            .frame(width: 8)
         }
     }
     
     private func barColor(for index: Int, level: Float) -> Color {
         let threshold = Float(index) / Float(barCount)
         if level < threshold {
-            return Color.gray.opacity(0.3)
+            return Color.gray.opacity(0.2)
         }
         
-        // Color gradient: green -> yellow -> red
+        // Color gradient: green -> yellow -> red (LED style)
         let position = Float(index) / Float(barCount)
         if position < 0.6 {
-            return Color.green
+            return Color.green.opacity(0.9)
         } else if position < 0.85 {
-            return Color.yellow
+            return Color.yellow.opacity(0.9)
         } else {
-            return Color.red
+            return Color.red.opacity(0.9)
         }
     }
 }

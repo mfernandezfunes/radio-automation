@@ -47,6 +47,6 @@ struct musica_playerApp: App {
         Window("Config", id: "config") {
             ConfigView(player1: player1, player2: player2)
         }
-        .defaultSize(width: 500, height: 700)
+        .defaultSize(width: 900, height: 700)
     }
 }

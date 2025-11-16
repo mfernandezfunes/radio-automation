@@ -13,8 +13,10 @@ struct DraggablePlayerPanel: View {
     @ObservedObject var player: MusicPlayer
     @Binding var autoArrangeTrigger: Int
     let containerSize: CGSize
+    let visiblePanels: Int // Number of visible panels (1 or 2)
     @State private var position: CGPoint = .zero
     @State private var dragStart: CGPoint = .zero
+    @State private var panelSize: CGSize = CGSize(width: 500, height: 800)
     
     var body: some View {
         VStack(spacing: 0) {
@@ -50,7 +52,7 @@ struct DraggablePlayerPanel: View {
                 player: player
             )
         }
-        .frame(width: 500, height: 800)
+        .frame(width: panelSize.width, height: panelSize.height)
         .background(Color(NSColor.windowBackgroundColor))
         .cornerRadius(8)
         .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 5)
@@ -82,22 +84,47 @@ struct DraggablePlayerPanel: View {
     }
     
     private func arrangePosition(in size: CGSize) {
-        let panelWidth: CGFloat = 500
-        let panelHeight: CGFloat = 800
+        let statusBarHeight: CGFloat = 70
+        let availableHeight = size.height - statusBarHeight
         let spacing: CGFloat = 20
+        let padding: CGFloat = 20
         
-        if playerName == "Player 1" {
-            // Position on the left
+        // Calculate panel size based on available space and number of visible panels
+        let availableWidth = size.width - (padding * 2)
+        
+        if visiblePanels == 1 {
+            // Single panel: use most of the available space
+            panelSize = CGSize(
+                width: min(availableWidth - spacing, 800),
+                height: min(availableHeight - spacing, 900)
+            )
+            
+            // Center the single panel
             position = CGPoint(
-                x: panelWidth / 2 + spacing,
-                y: size.height / 2 + 50 // Account for status bar
+                x: size.width / 2,
+                y: statusBarHeight + availableHeight / 2
             )
         } else {
-            // Position on the right
-            position = CGPoint(
-                x: size.width - panelWidth / 2 - spacing,
-                y: size.height / 2 + 50 // Account for status bar
+            // Two panels: divide space equally
+            let panelWidth = (availableWidth - spacing) / 2
+            panelSize = CGSize(
+                width: min(panelWidth, 600),
+                height: min(availableHeight - spacing, 900)
             )
+            
+            if playerName == "Player 1" {
+                // Position on the left
+                position = CGPoint(
+                    x: padding + panelSize.width / 2,
+                    y: statusBarHeight + availableHeight / 2
+                )
+            } else {
+                // Position on the right
+                position = CGPoint(
+                    x: size.width - padding - panelSize.width / 2,
+                    y: statusBarHeight + availableHeight / 2
+                )
+            }
         }
     }
 }

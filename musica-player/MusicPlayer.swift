@@ -22,6 +22,31 @@ class MusicPlayer: NSObject, ObservableObject {
     @Published var vuMeterSensitivity: Float = 1.1 // Sensitivity scale factor for VU meters (1.0 - 5.0)
     
     @Published var autoPlayNext: Bool = false // Auto-continue to next song when current finishes
+    
+    // Audio effects
+    @Published var compressorEnabled: Bool = false
+    @Published var compressorThreshold: Float = -20.0 // dB
+    @Published var compressorRatio: Float = 4.0 // 1:1 to 20:1
+    @Published var compressorAttack: Float = 0.001 // seconds
+    @Published var compressorRelease: Float = 0.05 // seconds
+    
+    @Published var reverbEnabled: Bool = false
+    @Published var reverbWetDryMix: Float = 30.0 // 0-100%
+    @Published var reverbPreset: AVAudioUnitReverbPreset = .mediumHall
+    
+    @Published var delayEnabled: Bool = false
+    @Published var delayTime: TimeInterval = 0.25 // seconds
+    @Published var delayFeedback: Float = 30.0 // 0-100%
+    @Published var delayWetDryMix: Float = 20.0 // 0-100%
+    
+    @Published var equalizerEnabled: Bool = false
+    @Published var equalizerLowGain: Float = 0.0 // dB
+    @Published var equalizerMidGain: Float = 0.0 // dB
+    @Published var equalizerHighGain: Float = 0.0 // dB
+    
+    // AirPlay - Note: On macOS, AirPlay is managed by system preferences
+    // The audioEngine automatically uses the system-selected output device
+    @Published var airPlayInfo: String = "Usar Preferencias del Sistema"
     @Published var leftLevel: Float = 0.0
     @Published var rightLevel: Float = 0.0
     @Published var detectedBPM: Double? = nil // Detected beats per minute
@@ -34,6 +59,16 @@ class MusicPlayer: NSObject, ObservableObject {
     private let playerNode = AVAudioPlayerNode()
     private var audioFile: AVAudioFile?
     private var currentAccessingURL: URL?
+    
+    // Audio effects units
+    private var compressorUnit: AVAudioUnitEffect?
+    private var reverbUnit: AVAudioUnitReverb?
+    private var delayUnit: AVAudioUnitDelay?
+    private var equalizerUnit: AVAudioUnitEQ?
+    
+    // Audio routing
+    private var effectChain: [AVAudioNode] = []
+    private var tapInstalled: Bool = false
     
     // Time tracking
     private var playbackTimer: Timer?
@@ -64,6 +99,8 @@ class MusicPlayer: NSObject, ObservableObject {
         super.init()
         
         setupAudioEngine()
+        setupAudioEffects()
+        detectOutputDevices()
         
         // Observe playlist changes
         playlist.$currentIndex
@@ -71,6 +108,9 @@ class MusicPlayer: NSObject, ObservableObject {
                 self?.loadCurrentSong()
             }
             .store(in: &cancellables)
+        
+        // Observe effect changes
+        observeEffectChanges()
     }
     
     private var cancellables = Set<AnyCancellable>()
@@ -89,16 +129,16 @@ class MusicPlayer: NSObject, ObservableObject {
         // Attach player node to engine
         audioEngine.attach(playerNode)
         
-        // Connect player node to main mixer
-        let mixer = audioEngine.mainMixerNode
-        audioEngine.connect(playerNode, to: mixer, format: nil)
+        // Build effect chain once - effects will always be connected
+        buildEffectChainOnce()
         
         // Install tap on mixer for level monitoring
-        // Use a larger buffer size for better performance
+        let mixer = audioEngine.mainMixerNode
         let format = mixer.outputFormat(forBus: 0)
-        mixer.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, time in
+        mixer.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] (buffer: AVAudioPCMBuffer, time: AVAudioTime) in
             self?.processAudioBuffer(buffer)
         }
+        tapInstalled = true
         
         // Start audio engine
         do {
@@ -108,8 +148,356 @@ class MusicPlayer: NSObject, ObservableObject {
         }
     }
     
+    private func buildEffectChainOnce() {
+        // Create and attach all effect units (always connected)
+        // They will be controlled via parameters, not by adding/removing from chain
+        
+        // Delay unit
+        let delay = AVAudioUnitDelay()
+        audioEngine.attach(delay)
+        delayUnit = delay
+        
+        // Reverb unit
+        let reverb = AVAudioUnitReverb()
+        audioEngine.attach(reverb)
+        reverbUnit = reverb
+        
+        // Equalizer unit
+        let eq = AVAudioUnitEQ(numberOfBands: 3)
+        audioEngine.attach(eq)
+        equalizerUnit = eq
+        
+        // Connect: player -> delay -> reverb -> eq -> mixer
+        // Always connected, effects controlled via wet/dry mix
+        audioEngine.connect(playerNode, to: delay, format: nil)
+        audioEngine.connect(delay, to: reverb, format: nil)
+        audioEngine.connect(reverb, to: eq, format: nil)
+        audioEngine.connect(eq, to: audioEngine.mainMixerNode, format: nil)
+        
+        // Initialize effect parameters
+        configureDelay(delay)
+        configureReverb(reverb)
+        configureEqualizer(eq)
+        
+        // Set initial wet/dry mix based on enabled state
+        updateEffectStates()
+    }
+    
+    private func updateEffectStates() {
+        // Update delay wet/dry mix (0% = bypass, 100% = full effect)
+        if let delay = delayUnit {
+            delay.wetDryMix = delayEnabled ? delayWetDryMix : 0.0
+        }
+        
+        // Update reverb wet/dry mix
+        if let reverb = reverbUnit {
+            reverb.wetDryMix = reverbEnabled ? reverbWetDryMix : 0.0
+        }
+        
+        // For equalizer, we can't bypass easily, so we set gains to 0 when disabled
+        if let eq = equalizerUnit {
+            if equalizerEnabled {
+                eq.bands[0].gain = equalizerLowGain
+                eq.bands[1].gain = equalizerMidGain
+                eq.bands[2].gain = equalizerHighGain
+            } else {
+                eq.bands[0].gain = 0.0
+                eq.bands[1].gain = 0.0
+                eq.bands[2].gain = 0.0
+            }
+        }
+    }
+    
+    private func setupAudioEffects() {
+        // Create audio effect units
+        // These will be attached and connected when enabled
+    }
+    
+    private func rebuildEffectChain() {
+        // Stop engine first
+        let wasRunning = audioEngine.isRunning
+        if wasRunning {
+            audioEngine.stop()
+        }
+        
+        // Remove existing tap safely
+        let mixer = audioEngine.mainMixerNode
+        if tapInstalled {
+            mixer.removeTap(onBus: 0)
+            tapInstalled = false
+        }
+        
+        // Detach all effect units
+        if let compressor = compressorUnit {
+            audioEngine.detach(compressor)
+        }
+        if let reverb = reverbUnit {
+            audioEngine.detach(reverb)
+        }
+        if let delay = delayUnit {
+            audioEngine.detach(delay)
+        }
+        if let eq = equalizerUnit {
+            audioEngine.detach(eq)
+        }
+        
+        // Reset effect chain
+        effectChain.removeAll()
+        compressorUnit = nil
+        reverbUnit = nil
+        delayUnit = nil
+        equalizerUnit = nil
+        
+        // Build effect chain based on enabled effects
+        var currentNode: AVAudioNode = playerNode
+        
+        // Compressor - Using AVAudioUnitEQ for dynamic range compression effect
+        // Note: Full compressor requires AVAudioUnitVarispeed or custom processing
+        // For now, we'll skip compressor as AVAudioUnitEffect doesn't have built-in compressor
+        // Compressor can be implemented using AVAudioUnitEQ with dynamic gain adjustment
+        
+        // Delay (before reverb for better sound)
+        if delayEnabled {
+            let delay = AVAudioUnitDelay()
+            audioEngine.attach(delay)
+            configureDelay(delay)
+            effectChain.append(delay)
+            currentNode = delay
+            delayUnit = delay
+        }
+        
+        // Reverb
+        if reverbEnabled {
+            let reverb = AVAudioUnitReverb()
+            audioEngine.attach(reverb)
+            configureReverb(reverb)
+            effectChain.append(reverb)
+            currentNode = reverb
+            reverbUnit = reverb
+        }
+        
+        // Equalizer
+        if equalizerEnabled {
+            let eq = AVAudioUnitEQ(numberOfBands: 3)
+            audioEngine.attach(eq)
+            configureEqualizer(eq)
+            effectChain.append(eq)
+            currentNode = eq
+            equalizerUnit = eq
+        }
+        
+        // Connect chain to mixer (reuse mixer variable declared above)
+        if effectChain.isEmpty {
+            audioEngine.connect(playerNode, to: mixer, format: nil)
+        } else {
+            // Connect player to first effect
+            audioEngine.connect(playerNode, to: effectChain[0], format: nil)
+            
+            // Connect effects in chain
+            for i in 0..<effectChain.count - 1 {
+                audioEngine.connect(effectChain[i], to: effectChain[i + 1], format: nil)
+            }
+            
+            // Connect last effect to mixer
+            audioEngine.connect(effectChain.last!, to: mixer, format: nil)
+        }
+        
+        // Install tap for level monitoring
+        let format = mixer.outputFormat(forBus: 0)
+        mixer.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] (buffer: AVAudioPCMBuffer, time: AVAudioTime) in
+            self?.processAudioBuffer(buffer)
+        }
+        tapInstalled = true
+        
+        // Restart engine
+        do {
+            try audioEngine.start()
+        } catch {
+            print("Failed to restart audio engine: \(error)")
+        }
+    }
+    
+    // Compressor will be implemented using dynamic gain adjustment in processAudioBuffer
+    // For now, compressor is disabled as AVAudioUnitEffect doesn't provide compressor
+    
+    private func configureReverb(_ reverb: AVAudioUnitReverb) {
+        reverb.loadFactoryPreset(reverbPreset)
+        reverb.wetDryMix = reverbWetDryMix
+    }
+    
+    func refreshReverbPreset() {
+        reverbUnit?.loadFactoryPreset(reverbPreset)
+    }
+    
+    private func configureDelay(_ delay: AVAudioUnitDelay) {
+        delay.delayTime = delayTime
+        delay.feedback = delayFeedback
+        delay.wetDryMix = delayWetDryMix
+        delay.lowPassCutoff = 15000
+    }
+    
+    private func configureEqualizer(_ eq: AVAudioUnitEQ) {
+        // Low frequency (bass)
+        let lowBand = eq.bands[0]
+        lowBand.frequency = 80
+        lowBand.gain = equalizerLowGain
+        lowBand.bandwidth = 1.0
+        lowBand.filterType = .lowShelf
+        
+        // Mid frequency
+        let midBand = eq.bands[1]
+        midBand.frequency = 1000
+        midBand.gain = equalizerMidGain
+        midBand.bandwidth = 1.0
+        midBand.filterType = .parametric
+        
+        // High frequency (treble)
+        let highBand = eq.bands[2]
+        highBand.frequency = 8000
+        highBand.gain = equalizerHighGain
+        highBand.bandwidth = 1.0
+        highBand.filterType = .highShelf
+    }
+    
+    private func detectOutputDevices() {
+        // Note: AVAudioSession is iOS-specific
+        // On macOS, we use AVAudioEngine's outputNode which respects system audio preferences
+        // AirPlay devices appear automatically in system preferences
+        // We'll provide a way to refresh/check available devices
+        updateAvailableDevices()
+    }
+    
+    private func updateAvailableDevices() {
+        // On macOS, output devices are managed by the system
+        // The audioEngine.outputNode automatically uses the system-selected output
+        // We can't programmatically select AirPlay, but we can detect if it's available
+    }
+    
+    private func observeEffectChanges() {
+        // Note: Compressor disabled for now as it requires custom implementation
+        // Observe compressor changes (disabled)
+        // $compressorEnabled
+        //     .sink { [weak self] _ in self?.rebuildEffectChain() }
+        //     .store(in: &cancellables)
+        
+        $reverbEnabled
+            .sink { [weak self] enabled in
+                guard let self = self else { return }
+                // Immediately update reverb wet/dry mix when toggled
+                if let reverb = self.reverbUnit {
+                    reverb.wetDryMix = enabled ? self.reverbWetDryMix : 0.0
+                }
+                self.updateEffectStates()
+            }
+            .store(in: &cancellables)
+        
+        $delayEnabled
+            .sink { [weak self] enabled in
+                guard let self = self else { return }
+                // Immediately update delay wet/dry mix when toggled
+                if let delay = self.delayUnit {
+                    if enabled {
+                        delay.wetDryMix = self.delayWetDryMix
+                    } else {
+                        // When disabling, set wet/dry to 0 and reset delay buffer
+                        delay.wetDryMix = 0.0
+                        // Reset delay time briefly to clear buffer, then restore
+                        let currentTime = delay.delayTime
+                        delay.delayTime = 0.0
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
+                            delay.delayTime = currentTime
+                        }
+                    }
+                }
+                self.updateEffectStates()
+            }
+            .store(in: &cancellables)
+        
+        $equalizerEnabled
+            .sink { [weak self] enabled in
+                guard let self = self else { return }
+                // Immediately update equalizer gains when toggled
+                if let eq = self.equalizerUnit {
+                    if enabled {
+                        eq.bands[0].gain = self.equalizerLowGain
+                        eq.bands[1].gain = self.equalizerMidGain
+                        eq.bands[2].gain = self.equalizerHighGain
+                    } else {
+                        eq.bands[0].gain = 0.0
+                        eq.bands[1].gain = 0.0
+                        eq.bands[2].gain = 0.0
+                    }
+                }
+                self.updateEffectStates()
+            }
+            .store(in: &cancellables)
+        
+        // Observe parameter changes - update in real-time without rebuilding chain
+        $reverbWetDryMix
+            .sink { [weak self] value in
+                guard let self = self else { return }
+                if self.reverbEnabled {
+                    self.reverbUnit?.wetDryMix = value
+                }
+            }
+            .store(in: &cancellables)
+        
+        $delayTime
+            .sink { [weak self] value in
+                self?.delayUnit?.delayTime = TimeInterval(value)
+            }
+            .store(in: &cancellables)
+        
+        $delayFeedback
+            .sink { [weak self] value in
+                self?.delayUnit?.feedback = value
+            }
+            .store(in: &cancellables)
+        
+        $delayWetDryMix
+            .sink { [weak self] value in
+                guard let self = self else { return }
+                if self.delayEnabled {
+                    self.delayUnit?.wetDryMix = value
+                } else {
+                    self.delayUnit?.wetDryMix = 0.0
+                }
+            }
+            .store(in: &cancellables)
+        
+        $equalizerLowGain
+            .sink { [weak self] value in
+                guard let self = self else { return }
+                if self.equalizerEnabled {
+                    self.equalizerUnit?.bands[0].gain = value
+                }
+            }
+            .store(in: &cancellables)
+        
+        $equalizerMidGain
+            .sink { [weak self] value in
+                guard let self = self else { return }
+                if self.equalizerEnabled {
+                    self.equalizerUnit?.bands[1].gain = value
+                }
+            }
+            .store(in: &cancellables)
+        
+        $equalizerHighGain
+            .sink { [weak self] value in
+                guard let self = self else { return }
+                if self.equalizerEnabled {
+                    self.equalizerUnit?.bands[2].gain = value
+                }
+            }
+            .store(in: &cancellables)
+    }
+    
     private func stopAudioEngine() {
-        audioEngine.mainMixerNode.removeTap(onBus: 0)
+        if tapInstalled {
+            audioEngine.mainMixerNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
         playerNode.stop()
         if audioEngine.isRunning {
             audioEngine.stop()
@@ -614,10 +1002,21 @@ class MusicPlayer: NSObject, ObservableObject {
         // This is before normalization, so we get the actual energy level
         let rawMonoEnergy = (leftLevel + rightLevel) / 2.0
         
-        // Apply smoothing to energy (similar to VU meters) to avoid false positives
-        smoothedEnergy = smoothedEnergy * smoothingFactor + rawMonoEnergy * (1 - smoothingFactor)
+        // Normalize energy for beat detection to be independent of volume
+        // The volume is applied in playerNode, so we need to compensate for it
+        // If volume is 0, we can't detect beats, but if volume is low, we still want to detect
+        let normalizedEnergyForBeatDetection: Float
+        if volume > 0.01 { // Avoid division by zero
+            // Normalize by dividing by volume to get the "original" energy level
+            normalizedEnergyForBeatDetection = rawMonoEnergy / volume
+        } else {
+            normalizedEnergyForBeatDetection = 0.0
+        }
         
-        // Real-time beat detection using smoothed energy
+        // Apply smoothing to energy (similar to VU meters) to avoid false positives
+        smoothedEnergy = smoothedEnergy * smoothingFactor + normalizedEnergyForBeatDetection * (1 - smoothingFactor)
+        
+        // Real-time beat detection using smoothed energy (volume-independent)
         detectBeat(energy: smoothedEnergy)
         
         // Apply smoothing and normalize to 0-1 range
@@ -657,7 +1056,8 @@ class MusicPlayer: NSObject, ObservableObject {
         averageEnergy = recentEnergyValues.reduce(0, +) / Float(recentEnergyValues.count)
         
         // Only detect beats if we have meaningful audio (similar to VU meters threshold)
-        guard averageEnergy > 0.005 else { return } // Minimum energy threshold
+        // Use a lower threshold since we're now working with normalized energy
+        guard averageEnergy > 0.001 else { return } // Minimum energy threshold (lower because it's normalized)
         
         // Calculate variance to determine dynamic threshold
         let variance = recentEnergyValues.map { pow($0 - averageEnergy, 2) }.reduce(0, +) / Float(recentEnergyValues.count)

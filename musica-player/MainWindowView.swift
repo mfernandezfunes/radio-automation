@@ -47,6 +47,8 @@ struct MainWindowView: View {
                 
                 // Container for draggable panels
                 GeometryReader { geometry in
+                    let visibleCount = (showPlayer1 ? 1 : 0) + (showPlayer2 ? 1 : 0)
+                    
                     ZStack {
                         // Player 1 panel
                         if showPlayer1 {
@@ -55,7 +57,8 @@ struct MainWindowView: View {
                                 playlist: playlist1,
                                 player: player1,
                                 autoArrangeTrigger: $autoArrangeTrigger,
-                                containerSize: geometry.size
+                                containerSize: geometry.size,
+                                visiblePanels: visibleCount
                             )
                         }
                         
@@ -66,7 +69,8 @@ struct MainWindowView: View {
                                 playlist: playlist2,
                                 player: player2,
                                 autoArrangeTrigger: $autoArrangeTrigger,
-                                containerSize: geometry.size
+                                containerSize: geometry.size,
+                                visiblePanels: visibleCount
                             )
                         }
                     }
