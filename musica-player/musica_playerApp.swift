@@ -42,5 +42,11 @@ struct musica_playerApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
         }
+        
+        // Configuration window - single instance
+        Window("Config", id: "config") {
+            ConfigView(player1: player1, player2: player2)
+        }
+        .defaultSize(width: 500, height: 700)
     }
 }

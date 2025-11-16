@@ -19,6 +19,8 @@ class MusicPlayer: NSObject, ObservableObject {
         }
     }
     
+    @Published var vuMeterSensitivity: Float = 2.5 // Sensitivity scale factor for VU meters (1.0 - 5.0)
+    
     @Published var autoPlayNext: Bool = false // Auto-continue to next song when current finishes
     @Published var leftLevel: Float = 0.0
     @Published var rightLevel: Float = 0.0
@@ -628,9 +630,9 @@ class MusicPlayer: NSObject, ObservableObject {
             let newRight = self.rightLevel * smoothingFactor + rightLevel * (1 - smoothingFactor)
             
             // Normalize: RMS values are typically in range 0.0 to ~0.3 for normal audio
-            // Use a more conservative scaling to avoid saturation
+            // Use adjustable sensitivity scaling to avoid saturation
             // Scale to make typical levels (0.05-0.2) visible without saturating
-            let scale: Float = 2.5 // Scale factor for visibility
+            let scale = self.vuMeterSensitivity // Use adjustable sensitivity
             let normalizedLeft = min(newLeft * scale, 1.0)
             let normalizedRight = min(newRight * scale, 1.0)
             

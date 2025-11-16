@@ -8,6 +8,7 @@
 import SwiftUI
 
 struct StatusBarView: View {
+    @Environment(\.openWindow) private var openWindow
     @State private var currentTime = Date()
     var onAutoArrange: (() -> Void)? = nil
     var onOpenPlayer1: (() -> Void)? = nil
@@ -41,21 +42,33 @@ struct StatusBarView: View {
             
             Spacer()
             
-            // Current Time and Auto-arrange button
+            // Current Time and buttons
             VStack(alignment: .center, spacing: 8) {
                 Text(currentTime, style: .time)
                     .font(.system(.title2, design: .monospaced))
                     .fontWeight(.medium)
                 
-                Button(action: {
-                    onAutoArrange?()
-                }) {
-                    Image(systemName: "square.grid.2x2")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                HStack(spacing: 12) {
+                    Button(action: {
+                        onAutoArrange?()
+                    }) {
+                        Image(systemName: "square.grid.2x2")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Auto-arrange player windows")
+                    
+                    Button(action: {
+                        openWindow(id: "config")
+                    }) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Abrir configuración")
                 }
-                .buttonStyle(.plain)
-                .help("Auto-arrange player windows")
             }
             
             Spacer()
