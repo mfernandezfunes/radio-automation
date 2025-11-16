@@ -32,22 +32,8 @@ struct ContentView: View {
         VStack(spacing: 0) {
             // Top status bar
             StatusBarView(
-                player1State: StatusBarView.PlayerState(
-                    name: "Player 1",
-                    isPlaying: player1.isPlaying,
-                    currentSong: playlist1.currentSong?.title,
-                    currentArtist: playlist1.currentSong?.artist,
-                    currentTime: player1.currentTime,
-                    duration: player1.duration
-                ),
-                player2State: StatusBarView.PlayerState(
-                    name: "Player 2",
-                    isPlaying: player2.isPlaying,
-                    currentSong: playlist2.currentSong?.title,
-                    currentArtist: playlist2.currentSong?.artist,
-                    currentTime: player2.currentTime,
-                    duration: player2.duration
-                )
+                onOpenPlayer1: {},
+                onOpenPlayer2: {}
             )
             
             Divider()

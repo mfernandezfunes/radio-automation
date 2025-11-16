@@ -12,6 +12,7 @@ import SwiftUI
 class Playlist: ObservableObject {
     @Published var songs: [Song] = []
     @Published var currentIndex: Int? = nil
+    @Published var nextIndex: Int? = nil // Manually marked next song
     @Published var isShuffled: Bool = false
     @Published var repeatMode: RepeatMode = .off
     
@@ -47,6 +48,15 @@ class Playlist: ObservableObject {
                 currentIndex = current - 1
             }
         }
+        
+        // Adjust next index if necessary
+        if let next = nextIndex {
+            if index == next {
+                nextIndex = nil
+            } else if index < next {
+                nextIndex = next - 1
+            }
+        }
     }
     
     func moveSong(from source: IndexSet, to destination: Int) {
@@ -61,6 +71,19 @@ class Playlist: ObservableObject {
                     currentIndex = current - 1
                 } else if sourceIndex > current && destination <= current {
                     currentIndex = current + 1
+                }
+            }
+        }
+        
+        // Adjust next index after moving
+        if let next = nextIndex {
+            if let sourceIndex = source.first {
+                if sourceIndex == next {
+                    nextIndex = destination > sourceIndex ? destination - 1 : destination
+                } else if sourceIndex < next && destination > next {
+                    nextIndex = next - 1
+                } else if sourceIndex > next && destination <= next {
+                    nextIndex = next + 1
                 }
             }
         }
@@ -108,10 +131,18 @@ class Playlist: ObservableObject {
     func nextSong() -> Song? {
         guard let index = currentIndex, !songs.isEmpty else { return nil }
         
-        let nextIndex = index + 1
-        if nextIndex < songs.count {
-            currentIndex = nextIndex
-            return songs[nextIndex]
+        // If there's a manually marked next song, use it
+        if let markedNext = nextIndex, markedNext >= 0 && markedNext < songs.count {
+            currentIndex = markedNext
+            nextIndex = nil // Clear the marked next after using it
+            return songs[markedNext]
+        }
+        
+        // Otherwise, calculate next normally
+        let calculatedNext = index + 1
+        if calculatedNext < songs.count {
+            currentIndex = calculatedNext
+            return songs[calculatedNext]
         } else if repeatMode == .all {
             // Start from beginning
             currentIndex = 0
@@ -134,6 +165,33 @@ class Playlist: ObservableObject {
             return songs[lastIndex]
         }
         return nil
+    }
+    
+    func getNextIndex() -> Int? {
+        // If there's a manually marked next song, return it
+        if let markedNext = nextIndex {
+            return markedNext
+        }
+        
+        // Otherwise, calculate next normally
+        guard let index = currentIndex, !songs.isEmpty else { return nil }
+        
+        let calculatedNext = index + 1
+        if calculatedNext < songs.count {
+            return calculatedNext
+        } else if repeatMode == .all {
+            // Start from beginning
+            return 0
+        }
+        return nil
+    }
+    
+    func setNextIndex(_ index: Int?) {
+        guard let idx = index, idx >= 0 && idx < songs.count else {
+            nextIndex = nil
+            return
+        }
+        nextIndex = idx
     }
 }
 

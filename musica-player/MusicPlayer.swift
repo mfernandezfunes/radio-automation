@@ -19,7 +19,7 @@ class MusicPlayer: NSObject, ObservableObject {
         }
     }
     
-    @Published var autoPlayNext: Bool = true // Auto-continue to next song when current finishes
+    @Published var autoPlayNext: Bool = false // Auto-continue to next song when current finishes
     
     private let seekInterval: TimeInterval = 10.0 // 10 seconds for rewind/fast forward
     
@@ -162,24 +162,24 @@ class MusicPlayer: NSObject, ObservableObject {
     }
     
     func next() {
+        // Stop current playback
+        stop()
+        
+        // Load and play next song
         if let nextSong = playlist.nextSong() {
             loadCurrentSong()
-            if isPlaying {
-                play()
-            }
-        } else {
-            stop()
+            play()
         }
     }
     
     func previous() {
+        // Stop current playback
+        stop()
+        
+        // Load and play previous song
         if let previousSong = playlist.previousSong() {
             loadCurrentSong()
-            if isPlaying {
-                play()
-            }
-        } else {
-            stop()
+            play()
         }
     }
     
