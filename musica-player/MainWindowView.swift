@@ -56,6 +56,7 @@ struct MainWindowView: View {
                                 playerName: "Player 1",
                                 playlist: playlist1,
                                 player: player1,
+                                otherPlayer: player2,
                                 autoArrangeTrigger: $autoArrangeTrigger,
                                 containerSize: geometry.size,
                                 visiblePanels: visibleCount
@@ -68,6 +69,7 @@ struct MainWindowView: View {
                                 playerName: "Player 2",
                                 playlist: playlist2,
                                 player: player2,
+                                otherPlayer: player1,
                                 autoArrangeTrigger: $autoArrangeTrigger,
                                 containerSize: geometry.size,
                                 visiblePanels: visibleCount
@@ -84,9 +86,12 @@ struct MainWindowView: View {
 
 #Preview {
     let playlist1 = Playlist()
-    let player1 = MusicPlayer(playlist: playlist1)
+    let player1 = MusicPlayer(playlist: playlist1, playerName: "Player 1")
     let playlist2 = Playlist()
-    let player2 = MusicPlayer(playlist: playlist2)
+    let player2 = MusicPlayer(playlist: playlist2, playerName: "Player 2")
+    
+    player1.otherPlayer = player2
+    player2.otherPlayer = player1
     
     return MainWindowView(
         playlist1: playlist1,

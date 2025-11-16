@@ -18,9 +18,13 @@ struct musica_playerApp: App {
     init() {
         // Create instances correctly
         let p1 = Playlist()
-        let pl1 = MusicPlayer(playlist: p1)
+        let pl1 = MusicPlayer(playlist: p1, playerName: "Player 1")
         let p2 = Playlist()
-        let pl2 = MusicPlayer(playlist: p2)
+        let pl2 = MusicPlayer(playlist: p2, playerName: "Player 2")
+        
+        // Set cross-references for command execution
+        pl1.otherPlayer = pl2
+        pl2.otherPlayer = pl1
         
         _playlist1 = StateObject(wrappedValue: p1)
         _player1 = StateObject(wrappedValue: pl1)

@@ -8,11 +8,13 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import AVFoundation
+import CoreMedia
 import Combine
 
 struct PlayerView: View {
     @ObservedObject var playlist: Playlist
     @ObservedObject var player: MusicPlayer
+    var otherPlayer: MusicPlayer? // Reference to the other player for commands
     @State private var showingFilePicker = false
     @State private var blinkOpacity: Double = 1.0
     @State private var blinkTimer: Timer?
@@ -34,10 +36,27 @@ struct PlayerView: View {
         return timeRemaining <= 10.0 && playlist.getNextIndex() != nil
     }
     
-    init(playerName: String, playlist: Playlist, player: MusicPlayer) {
+    init(playerName: String, playlist: Playlist, player: MusicPlayer, otherPlayer: MusicPlayer? = nil) {
         self.playerName = playerName
         self.playlist = playlist
         self.player = player
+        self.otherPlayer = otherPlayer
+    }
+    
+    // Helper function to format time
+    private func formatTime(_ time: TimeInterval) -> String {
+        let minutes = Int(time) / 60
+        let seconds = Int(time) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+    
+    // Helper function to get duration from audio file
+    private func getDuration(from url: URL) -> TimeInterval? {
+        let asset = AVAsset(url: url)
+        // AVAsset duration is available synchronously for local files
+        let duration = asset.duration
+        let durationSeconds = CMTimeGetSeconds(duration)
+        return durationSeconds.isFinite ? durationSeconds : nil
     }
     
     // Helper function to extract metadata from audio file
@@ -395,117 +414,355 @@ struct PlayerView: View {
                 .padding()
             } else {
                 List {
-                    ForEach(Array(playlist.songs.enumerated()), id: \.element.id) { index, song in
-                        let isNextSong = playlist.getNextIndex() == index
-                        let shouldBlink = shouldBlinkNextSong && isNextSong
+                    ForEach(Array(playlist.items.enumerated()), id: \.element.id) { index, item in
+                        let isNextItem = playlist.getNextIndex() == index
+                        let shouldBlink = shouldBlinkNextSong && isNextItem && !item.isCommand
                         
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 6) {
-                                    Text(song.title)
-                                        .font(.body)
-                                        .fontWeight(playlist.currentIndex == index ? .semibold : .regular)
-                                        .foregroundColor(.primary)
+                        if item.isCommand, let command = item.command {
+                            // Display command item
+                            HStack {
+                                Text("\(index + 1)")
+                                    .font(.system(.body, design: .monospaced))
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 30, alignment: .trailing)
+                                
+                                Image(systemName: command.commandType.icon)
+                                    .font(.title3)
+                                    .foregroundColor(.blue)
+                                    .frame(width: 24)
+                                
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(spacing: 6) {
+                                        Text(command.commandType.displayName)
+                                            .font(.body)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.blue)
+                                        
+                                        if isNextItem {
+                                            Text("NEXT")
+                                                .font(.caption2)
+                                                .fontWeight(.bold)
+                                                .foregroundColor(.orange)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(Color.orange.opacity(0.2))
+                                                .cornerRadius(4)
+                                        }
+                                    }
                                     
-                                    if playlist.currentIndex == index && player.isPlaying {
-                                        Text("ON AIR")
-                                            .font(.caption2)
-                                            .fontWeight(.bold)
-                                            .foregroundColor(.green)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(Color.green.opacity(0.2))
-                                            .cornerRadius(4)
-                                    } else if isNextSong {
-                                        Text("NEXT")
-                                            .font(.caption2)
-                                            .fontWeight(.bold)
-                                            .foregroundColor(.orange)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(Color.orange.opacity(0.2))
-                                            .cornerRadius(4)
+                                    Text("Comando")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Spacer()
+                                
+                                Text("--")
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 50, alignment: .trailing)
+                                
+                                if playlist.currentIndex == index {
+                                    Image(systemName: "play.circle.fill")
+                                        .foregroundColor(.blue)
+                                }
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                playlist.currentIndex == index
+                                    ? Color.blue.opacity(0.15)
+                                    : Color.blue.opacity(0.05)
+                            )
+                            .cornerRadius(6)
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                Button(action: {
+                                    // Stop current playback and execute this command now
+                                    player.stop()
+                                    playlist.currentIndex = index
+                                    if let currentItem = playlist.currentItem, currentItem.isCommand {
+                                        player.executeCommand(currentItem.command!)
+                                    }
+                                }) {
+                                    Label("Parar y Ejecutar Ahora", systemImage: "play.fill")
+                                }
+                                
+                                Button(action: {
+                                    // Set as next item
+                                    playlist.setNextIndex(index)
+                                }) {
+                                    Label("Reproducir Siguiente", systemImage: "forward.fill")
+                                }
+                                
+                                Divider()
+                                
+                                // Insert command options
+                                Menu("Insertar Comando") {
+                                    if let otherPlayer = otherPlayer {
+                                        // Show command based on current player
+                                        if playerName == "Player 1" {
+                                            Button(action: {
+                                                let newCommand = PlaylistCommand(commandType: .stopPlayer1AndPlayNextInPlayer2)
+                                                playlist.addCommand(newCommand, afterIndex: index)
+                                            }) {
+                                                Label("Parar Player 1 → Siguiente en Player 2", systemImage: "arrow.triangle.2.circlepath")
+                                            }
+                                        } else if playerName == "Player 2" {
+                                            Button(action: {
+                                                let newCommand = PlaylistCommand(commandType: .stopPlayer2AndPlayNextInPlayer1)
+                                                playlist.addCommand(newCommand, afterIndex: index)
+                                            }) {
+                                                Label("Parar Player 2 → Siguiente en Player 1", systemImage: "arrow.triangle.2.circlepath")
+                                            }
+                                        }
+                                        
+                                        Divider()
+                                        
+                                        Button(action: {
+                                            let newCommand = PlaylistCommand(commandType: .stopPlayer1)
+                                            playlist.addCommand(newCommand, afterIndex: index)
+                                        }) {
+                                            Label("Parar Player 1", systemImage: "stop.fill")
+                                        }
+                                        
+                                        Button(action: {
+                                            let newCommand = PlaylistCommand(commandType: .stopPlayer2)
+                                            playlist.addCommand(newCommand, afterIndex: index)
+                                        }) {
+                                            Label("Parar Player 2", systemImage: "stop.fill")
+                                        }
+                                        
+                                        Button(action: {
+                                            let newCommand = PlaylistCommand(commandType: .pausePlayer1)
+                                            playlist.addCommand(newCommand, afterIndex: index)
+                                        }) {
+                                            Label("Pausar Player 1", systemImage: "pause.fill")
+                                        }
+                                        
+                                        Button(action: {
+                                            let newCommand = PlaylistCommand(commandType: .pausePlayer2)
+                                            playlist.addCommand(newCommand, afterIndex: index)
+                                        }) {
+                                            Label("Pausar Player 2", systemImage: "pause.fill")
+                                        }
                                     }
                                 }
-                                Text(song.artist)
-                                    .font(.caption)
+                                
+                                Divider()
+                                
+                                if index > 0 {
+                                    Button(action: {
+                                        // Move command up one position
+                                        playlist.moveSong(from: IndexSet(integer: index), to: index - 1)
+                                    }) {
+                                        Label("Subir uno en la lista", systemImage: "arrow.up")
+                                    }
+                                }
+                                
+                                if index < playlist.items.count - 1 {
+                                    Button(action: {
+                                        // Move command down one position
+                                        playlist.moveSong(from: IndexSet(integer: index), to: index + 2)
+                                    }) {
+                                        Label("Bajar uno en la lista", systemImage: "arrow.down")
+                                    }
+                                }
+                                
+                                Divider()
+                                
+                                Button(role: .destructive, action: {
+                                    // Remove command from playlist
+                                    playlist.removeSong(at: index)
+                                }) {
+                                    Label("Eliminar de la lista", systemImage: "trash")
+                                }
+                            }
+                        } else if let song = item.song {
+                            // Display song item
+                            HStack {
+                                Text("\(index + 1)")
+                                    .font(.system(.body, design: .monospaced))
+                                    .fontWeight(.medium)
                                     .foregroundColor(.secondary)
+                                    .frame(width: 30, alignment: .trailing)
+                                
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(spacing: 6) {
+                                        Text(song.title)
+                                            .font(.body)
+                                            .fontWeight(playlist.currentIndex == index ? .semibold : .regular)
+                                            .foregroundColor(.primary)
+                                        
+                                        if playlist.currentIndex == index && player.isPlaying {
+                                            Text("ON AIR")
+                                                .font(.caption2)
+                                                .fontWeight(.bold)
+                                                .foregroundColor(.green)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(Color.green.opacity(0.2))
+                                                .cornerRadius(4)
+                                        } else if isNextItem {
+                                            Text("NEXT")
+                                                .font(.caption2)
+                                                .fontWeight(.bold)
+                                                .foregroundColor(.orange)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(Color.orange.opacity(0.2))
+                                                .cornerRadius(4)
+                                        }
+                                    }
+                                    Text(song.artist)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                
+                                // Show duration
+                                if let accessibleURL = song.accessibleURL(),
+                                   let duration = getDuration(from: accessibleURL) {
+                                    Text(formatTime(duration))
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                        .frame(width: 50, alignment: .trailing)
+                                } else {
+                                    Text("--:--")
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                        .frame(width: 50, alignment: .trailing)
+                                }
+                                
+                                if playlist.currentIndex == index {
+                                    Image(systemName: "music.note")
+                                        .foregroundColor(.accentColor)
+                                }
                             }
-                            Spacer()
-                            if playlist.currentIndex == index {
-                                Image(systemName: "music.note")
-                                    .foregroundColor(.accentColor)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .opacity(shouldBlink ? blinkOpacity : 1.0)
+                            .animation(.easeInOut(duration: 0.5), value: blinkOpacity)
+                            .background(
+                                playlist.currentIndex == index
+                                    ? Color.accentColor.opacity(0.15)
+                                    : Color.clear
+                            )
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                Button(action: {
+                                    // Stop current playback and play this song now
+                                    playlist.currentIndex = index
+                                    player.loadCurrentSong()
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                        player.play()
+                                    }
+                                }) {
+                                    Label("Parar y Reproducir Ahora", systemImage: "play.fill")
+                                }
+                                
+                                Button(action: {
+                                    // Set as next song
+                                    playlist.setNextIndex(index)
+                                }) {
+                                    Label("Reproducir Siguiente", systemImage: "forward.fill")
+                                }
+                                
+                                Divider()
+                                
+                                // Insert command options
+                                Menu("Insertar Comando") {
+                                    if let otherPlayer = otherPlayer {
+                                        // Show command based on current player
+                                        if playerName == "Player 1" {
+                                            Button(action: {
+                                                let command = PlaylistCommand(commandType: .stopPlayer1AndPlayNextInPlayer2)
+                                                playlist.addCommand(command, afterIndex: index)
+                                            }) {
+                                                Label("Parar Player 1 → Siguiente en Player 2", systemImage: "arrow.triangle.2.circlepath")
+                                            }
+                                        } else if playerName == "Player 2" {
+                                            Button(action: {
+                                                let command = PlaylistCommand(commandType: .stopPlayer2AndPlayNextInPlayer1)
+                                                playlist.addCommand(command, afterIndex: index)
+                                            }) {
+                                                Label("Parar Player 2 → Siguiente en Player 1", systemImage: "arrow.triangle.2.circlepath")
+                                            }
+                                        }
+                                        
+                                        Divider()
+                                        
+                                        Button(action: {
+                                            let command = PlaylistCommand(commandType: .stopPlayer1)
+                                            playlist.addCommand(command, afterIndex: index)
+                                        }) {
+                                            Label("Parar Player 1", systemImage: "stop.fill")
+                                        }
+                                        
+                                        Button(action: {
+                                            let command = PlaylistCommand(commandType: .stopPlayer2)
+                                            playlist.addCommand(command, afterIndex: index)
+                                        }) {
+                                            Label("Parar Player 2", systemImage: "stop.fill")
+                                        }
+                                        
+                                        Button(action: {
+                                            let command = PlaylistCommand(commandType: .pausePlayer1)
+                                            playlist.addCommand(command, afterIndex: index)
+                                        }) {
+                                            Label("Pausar Player 1", systemImage: "pause.fill")
+                                        }
+                                        
+                                        Button(action: {
+                                            let command = PlaylistCommand(commandType: .pausePlayer2)
+                                            playlist.addCommand(command, afterIndex: index)
+                                        }) {
+                                            Label("Pausar Player 2", systemImage: "pause.fill")
+                                        }
+                                    }
+                                }
+                                
+                                Divider()
+                                
+                                if index > 0 {
+                                    Button(action: {
+                                        // Move song up one position
+                                        playlist.moveSong(from: IndexSet(integer: index), to: index - 1)
+                                    }) {
+                                        Label("Subir uno en la lista", systemImage: "arrow.up")
+                                    }
+                                }
+                                
+                                if index < playlist.items.count - 1 {
+                                    Button(action: {
+                                        // Move song down one position
+                                        playlist.moveSong(from: IndexSet(integer: index), to: index + 2)
+                                    }) {
+                                        Label("Bajar uno en la lista", systemImage: "arrow.down")
+                                    }
+                                }
+                                
+                                Divider()
+                                
+                                Button(role: .destructive, action: {
+                                    // Remove song from playlist
+                                    playlist.removeSong(at: index)
+                                }) {
+                                    Label("Eliminar de la lista", systemImage: "trash")
+                                }
                             }
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .opacity(shouldBlink ? blinkOpacity : 1.0)
-                        .animation(.easeInOut(duration: 0.5), value: blinkOpacity)
-                        .background(
-                            playlist.currentIndex == index
-                                ? Color.accentColor.opacity(0.15)
-                                : Color.clear
-                        )
-                        .contentShape(Rectangle())
-                        .contextMenu {
-                            Button(action: {
-                                // Stop current playback and play this song now
-                                // loadCurrentSong() already calls stop() internally
-                                playlist.currentIndex = index
-                                player.loadCurrentSong()
-                                // Wait a moment for the file to load before playing
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            .onTapGesture(count: 2) {
+                                // Mark this song as next to play
+                                playlist.setNextIndex(index)
+                                // If no song is currently playing, start playing this one
+                                if playlist.currentIndex == nil || !player.isPlaying {
+                                    playlist.currentIndex = index
+                                    player.loadCurrentSong()
                                     player.play()
                                 }
-                            }) {
-                                Label("Parar y Reproducir Ahora", systemImage: "play.fill")
-                            }
-                            
-                            Button(action: {
-                                // Set as next song
-                                playlist.setNextIndex(index)
-                            }) {
-                                Label("Reproducir Siguiente", systemImage: "forward.fill")
-                            }
-                            
-                            Divider()
-                            
-                            if index > 0 {
-                                Button(action: {
-                                    // Move song up one position
-                                    playlist.moveSong(from: IndexSet(integer: index), to: index - 1)
-                                }) {
-                                    Label("Subir uno en la lista", systemImage: "arrow.up")
-                                }
-                            }
-                            
-                            if index < playlist.songs.count - 1 {
-                                Button(action: {
-                                    // Move song down one position
-                                    playlist.moveSong(from: IndexSet(integer: index), to: index + 2)
-                                }) {
-                                    Label("Bajar uno en la lista", systemImage: "arrow.down")
-                                }
-                            }
-                            
-                            Divider()
-                            
-                            Button(role: .destructive, action: {
-                                // Remove song from playlist
-                                playlist.removeSong(at: index)
-                            }) {
-                                Label("Eliminar de la lista", systemImage: "trash")
-                            }
-                        }
-                        .onTapGesture(count: 2) {
-                            // Mark this song as next to play
-                            playlist.setNextIndex(index)
-                            // If no song is currently playing, start playing this one
-                            if playlist.currentIndex == nil || !player.isPlaying {
-                                playlist.currentIndex = index
-                                player.loadCurrentSong()
-                                player.play()
                             }
                         }
                     }

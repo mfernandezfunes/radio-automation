@@ -11,6 +11,7 @@ struct DraggablePlayerPanel: View {
     let playerName: String
     @ObservedObject var playlist: Playlist
     @ObservedObject var player: MusicPlayer
+    var otherPlayer: MusicPlayer? // Reference to the other player for commands
     @Binding var autoArrangeTrigger: Int
     let containerSize: CGSize
     let visiblePanels: Int // Number of visible panels (1 or 2)
@@ -49,7 +50,8 @@ struct DraggablePlayerPanel: View {
             PlayerView(
                 playerName: playerName,
                 playlist: playlist,
-                player: player
+                player: player,
+                otherPlayer: otherPlayer
             )
         }
         .frame(width: panelSize.width, height: panelSize.height)

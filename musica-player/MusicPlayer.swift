@@ -125,9 +125,12 @@ class MusicPlayer: NSObject, ObservableObject {
     private let energyHistorySize = 43 // Keep last 43 values (~1 second at 44.1kHz with 1024 buffer)
     
     var playlist: Playlist
+    let playerName: String // "Player 1" or "Player 2"
+    weak var otherPlayer: MusicPlayer?
     
-    init(playlist: Playlist) {
+    init(playlist: Playlist, playerName: String = "Player") {
         self.playlist = playlist
+        self.playerName = playerName
         super.init()
         
         setupAudioEngine()
@@ -831,6 +834,30 @@ class MusicPlayer: NSObject, ObservableObject {
         currentTime = duration
         pausedTime = 0
         
+        // Check if current item is a command
+        if let currentItem = playlist.currentItem, currentItem.isCommand {
+            // Execute command
+            executeCommand(currentItem.command!)
+            
+            // Move to next item after command execution
+            // The executeCommand may have already advanced the playlist, so check what's next
+            if let nextItem = playlist.nextItem() {
+                if nextItem.isCommand {
+                    // If next is also a command, process it recursively
+                    processNextItem(for: self)
+                } else {
+                    // Load and play next song
+                    loadCurrentSong()
+                    if autoPlayNext || crossfadeEnabled {
+                        play()
+                    }
+                }
+            } else {
+                stop()
+            }
+            return
+        }
+        
         // Apply fade out before transitioning
         applyFadeOut { [weak self] in
             guard let self = self else { return }
@@ -841,15 +868,155 @@ class MusicPlayer: NSObject, ObservableObject {
                 self.loadCurrentSong()
                 self.play()
             } else if self.autoPlayNext || self.crossfadeEnabled {
-                // Automatically play next song if auto-play or crossfade is enabled
-                if let nextSong = self.playlist.nextSong() {
-                    self.loadCurrentSong()
-                    self.play()
+                // Automatically play next item if auto-play or crossfade is enabled
+                if let nextItem = self.playlist.nextItem() {
+                    if nextItem.isCommand {
+                        // Execute command - nextItem() already advanced the index to the command
+                        let command = nextItem.command!
+                        let commandStopsCurrentPlayer = self.willCommandStopCurrentPlayer(command)
+                        
+                        self.executeCommand(command)
+                        
+                        // Only continue processing if the command didn't stop the current player
+                        // Commands like stopPlayer1AndPlayNextInPlayer2 stop the current player,
+                        // so we shouldn't continue processing in this player
+                        if !commandStopsCurrentPlayer {
+                            // After command execution, process the next item (which may be another command or song)
+                            // The index is already at the command, so we need to advance to the next item
+                            if let itemAfterCommand = self.playlist.nextItem() {
+                                if itemAfterCommand.isCommand {
+                                    // If next is also a command, process it recursively
+                                    self.processNextItem(for: self)
+                                } else {
+                                    // Load and play next song
+                                    self.loadCurrentSong()
+                                    self.play()
+                                }
+                            } else {
+                                self.stop()
+                            }
+                        }
+                        // If command stopped current player, do nothing (command already handled the transition)
+                    } else {
+                        // Play next song
+                        self.loadCurrentSong()
+                        self.play()
+                    }
                 } else {
                     self.stop()
                 }
             } else {
                 self.stop()
+            }
+        }
+    }
+    
+    // Helper function to check if a command will stop the current player
+    private func willCommandStopCurrentPlayer(_ command: PlaylistCommand) -> Bool {
+        let isPlayer1 = playerName == "Player 1"
+        let isPlayer2 = playerName == "Player 2"
+        
+        switch command.commandType {
+        case .stopPlayer1AndPlayNextInPlayer2:
+            return isPlayer1 // Stops Player 1
+        case .stopPlayer2AndPlayNextInPlayer1:
+            return isPlayer2 // Stops Player 2
+        case .stopPlayer1:
+            return isPlayer1 // Stops Player 1
+        case .stopPlayer2:
+            return isPlayer2 // Stops Player 2
+        case .pausePlayer1, .pausePlayer2, .resumePlayer1, .resumePlayer2:
+            return false // These don't stop, they pause/resume
+        }
+    }
+    
+    // Helper function to process next item (command or song) for a player
+    func processNextItem(for targetPlayer: MusicPlayer) {
+        if let nextItem = targetPlayer.playlist.nextItem() {
+            if nextItem.isCommand {
+                // Execute command and continue processing
+                targetPlayer.executeCommand(nextItem.command!)
+                // Recursively process next item after command
+                processNextItem(for: targetPlayer)
+            } else {
+                // Load and play next song
+                targetPlayer.loadCurrentSong()
+                if targetPlayer.autoPlayNext || targetPlayer.crossfadeEnabled {
+                    targetPlayer.play()
+                }
+            }
+        }
+    }
+    
+    func executeCommand(_ command: PlaylistCommand) {
+        guard let otherPlayer = otherPlayer else { return }
+        
+        let isPlayer1 = playerName == "Player 1"
+        let isPlayer2 = playerName == "Player 2"
+        
+        switch command.commandType {
+        case .stopPlayer1AndPlayNextInPlayer2:
+            if isPlayer1 {
+                // Stop self (Player 1) and play next in Player 2
+                stop()
+                processNextItem(for: otherPlayer)
+            } else if isPlayer2 {
+                // Stop Player 1 and play next in self (Player 2)
+                otherPlayer.stop()
+                processNextItem(for: self)
+            }
+            
+        case .stopPlayer2AndPlayNextInPlayer1:
+            if isPlayer1 {
+                // Stop Player 2 and play next in self (Player 1)
+                otherPlayer.stop()
+                processNextItem(for: self)
+            } else if isPlayer2 {
+                // Stop self (Player 2) and play next in Player 1
+                stop()
+                processNextItem(for: otherPlayer)
+            }
+            
+        case .stopPlayer1:
+            if isPlayer1 {
+                stop()
+            } else if isPlayer2 {
+                otherPlayer.stop()
+            }
+            
+        case .stopPlayer2:
+            if isPlayer1 {
+                otherPlayer.stop()
+            } else if isPlayer2 {
+                stop()
+            }
+            
+        case .pausePlayer1:
+            if isPlayer1 {
+                pause()
+            } else if isPlayer2 {
+                otherPlayer.pause()
+            }
+            
+        case .pausePlayer2:
+            if isPlayer1 {
+                otherPlayer.pause()
+            } else if isPlayer2 {
+                pause()
+            }
+            
+        case .resumePlayer1:
+            if isPlayer1 {
+                play()
+            } else if isPlayer2 {
+                otherPlayer.play()
+            }
+            
+        case .resumePlayer2:
+            if isPlayer1 {
+                otherPlayer.play()
+            } else if isPlayer2 {
+                play()
             }
         }
     }
