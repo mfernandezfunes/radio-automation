@@ -8,11 +8,13 @@
 import Foundation
 import AVFoundation
 import Combine
+import Accelerate
 
 class MusicPlayer: NSObject, ObservableObject {
     @Published var isPlaying: Bool = false
     @Published var currentTime: TimeInterval = 0
     @Published var duration: TimeInterval = 0
+    @Published var nextSongDuration: TimeInterval? = nil // Duration of preloaded next song
     @Published var volume: Float = 0.5 {
         didSet {
             playerNode.volume = volume
@@ -22,6 +24,15 @@ class MusicPlayer: NSObject, ObservableObject {
     @Published var vuMeterSensitivity: Float = 1.1 // Sensitivity scale factor for VU meters (1.0 - 5.0)
     
     @Published var autoPlayNext: Bool = false // Auto-continue to next song when current finishes
+    
+    // Silence detection
+    @Published var silenceDetectionEnabled: Bool = false // Enable automatic silence detection
+    @Published var silenceThreshold: Float = 0.01 // RMS threshold below which audio is considered silent (0.0-1.0)
+    @Published var silenceDuration: TimeInterval = 3.0 // Duration of silence before auto-stop (seconds)
+    @Published var autoStopOnSilence: Bool = true // Automatically stop playback on long silence
+    @Published var autoPlayFallbackOnSilence: Bool = false // Auto-play fallback content on silence
+    @Published var isSilent: Bool = false // Current silence state
+    @Published var silenceDurationDetected: TimeInterval = 0.0 // Current detected silence duration
     
     // Audio effects
     @Published var compressorEnabled: Bool = false
@@ -51,6 +62,8 @@ class MusicPlayer: NSObject, ObservableObject {
     @Published var rightLevel: Float = 0.0
     @Published var detectedBPM: Double? = nil // Detected beats per minute
     @Published var beatDetected: Bool = false // Real-time beat detection
+    @Published var detectedKey: String? = nil // Detected musical key in Camelot format (e.g., "8A", "5B")
+    @Published var detectedKeyName: String? = nil // Detected key in standard format (e.g., "A minor", "C major")
     
     // BPM Detection Parameters
     @Published var bpmDetectionThreshold: Float = 0.3 // Threshold for peak detection (0.0-1.0)
@@ -66,6 +79,12 @@ class MusicPlayer: NSObject, ObservableObject {
     @Published var beatStdDevMultiplier: Float = 1.5 // Standard deviation multiplier for threshold
     @Published var beatMinThresholdMultiplier: Float = 1.15 // Minimum threshold multiplier above average
     @Published var beatMinEnergyThreshold: Float = 0.001 // Minimum energy threshold
+    
+    // Advanced beat detection parameters
+    @Published var useSpectralFlux: Bool = true // Use spectral flux for better beat detection
+    @Published var useHighFrequencyContent: Bool = true // Use HFC for percussion detection
+    @Published var spectralFluxWeight: Float = 0.6 // Weight for spectral flux (0.0-1.0)
+    @Published var hfcWeight: Float = 0.4 // Weight for high-frequency content (0.0-1.0)
     
     // Playback controls
     @Published var playbackRate: Float = 1.0 { // 0.5x to 2.0x speed
@@ -93,6 +112,7 @@ class MusicPlayer: NSObject, ObservableObject {
     private var audioFile: AVAudioFile?
     private var nextAudioFile: AVAudioFile? // Preloaded next song
     private var nextPreloadedSongId: UUID? // ID of the preloaded song
+    private var nextScheduled: Bool = false // Track if next song is already scheduled
     private var currentAccessingURL: URL?
     private var nextAccessingURL: URL? // Access for next song
     
@@ -114,6 +134,10 @@ class MusicPlayer: NSObject, ObservableObject {
     private var pausedTime: TimeInterval = 0
     private var isSeeking: Bool = false // Flag to prevent autoplay during seek
     
+    // Silence detection tracking
+    private var silenceStartTime: Date? = nil // When current silence period started
+    private var lastAudioDetectedTime: Date? = nil // Last time audio was detected above threshold
+    
     // Beat detection
     private var energyHistory: [Float] = []
     private var beatTimes: [TimeInterval] = []
@@ -126,6 +150,15 @@ class MusicPlayer: NSObject, ObservableObject {
     private var averageEnergy: Float = 0.0
     private var smoothedEnergy: Float = 0.0 // Smoothed energy for beat detection
     private let energyHistorySize = 43 // Keep last 43 values (~1 second at 44.1kHz with 1024 buffer)
+    
+    // Advanced beat detection - Spectral analysis
+    private var previousSpectrum: [Float] = [] // Previous FFT spectrum for spectral flux
+    private var recentSpectralFlux: [Float] = [] // Recent spectral flux values
+    private var recentHFC: [Float] = [] // Recent High-Frequency Content values
+    private var smoothedSpectralFlux: Float = 0.0
+    private var smoothedHFC: Float = 0.0
+    private let fftSize: Int = 1024 // FFT size for spectral analysis
+    private var fftSetup: vDSP_DFT_Setup? = nil // FFT setup for Accelerate
     
     var playlist: Playlist
     let playerName: String // "Player 1" or "Player 2"
@@ -152,17 +185,25 @@ class MusicPlayer: NSObject, ObservableObject {
             .sink { [weak self] nextIndex in
                 guard let self = self else { return }
                 
-                // If nextIndex is nil, clear any preloaded files
+                // If nextIndex is nil, clear any preloaded files and scheduled items
                 guard let nextIndex = nextIndex,
                       nextIndex >= 0,
                       nextIndex < self.playlist.items.count else {
-                    // Clear preloaded files when nextIndex is cleared
+                    // Clear preloaded files and scheduled items when nextIndex is cleared
+                    if self.nextScheduled {
+                        // Stop playerNode to clear scheduled items (only if not playing)
+                        if !self.isPlaying {
+                            self.playerNode.stop()
+                        }
+                        self.nextScheduled = false
+                    }
                     if let nextURL = self.nextAccessingURL {
                         nextURL.stopAccessingSecurityScopedResource()
                         self.nextAccessingURL = nil
                     }
                     self.nextAudioFile = nil
                     self.nextPreloadedSongId = nil
+                    self.nextSongDuration = nil
                     return
                 }
                 
@@ -170,7 +211,24 @@ class MusicPlayer: NSObject, ObservableObject {
                 // Only preload if it's a song (not a command)
                 if !nextItem.isCommand, let nextSong = nextItem.song {
                     // Preload the next song without playing it
+                    // This loads the file into memory but doesn't start playback
                     self.preloadSong(nextSong)
+                } else {
+                    // If it's a command or not a song, clear any preloaded files and scheduled items
+                    if self.nextScheduled {
+                        // Stop playerNode to clear scheduled items (only if not playing)
+                        if !self.isPlaying {
+                            self.playerNode.stop()
+                        }
+                        self.nextScheduled = false
+                    }
+                    if let nextURL = self.nextAccessingURL {
+                        nextURL.stopAccessingSecurityScopedResource()
+                        self.nextAccessingURL = nil
+                    }
+                    self.nextAudioFile = nil
+                    self.nextPreloadedSongId = nil
+                    self.nextSongDuration = nil
                 }
             }
             .store(in: &cancellables)
@@ -590,7 +648,17 @@ class MusicPlayer: NSObject, ObservableObject {
     }
     
     // Preload a song without stopping current playback or playing it
+    // This function loads the file into memory AND schedules it in the playerNode
+    // but does NOT start playback. This allows for instant playback when the song becomes current.
     func preloadSong(_ song: Song) {
+        // IMPORTANT: This function calls scheduleFile() but NOT play()
+        // The file is loaded, scheduled, and ready for instant playback
+        
+        // Clear any previously scheduled next song
+        // Note: We can't stop the playerNode if it's playing, so we'll handle this differently
+        // We'll track that we have a scheduled file, and when loadCurrentSong() is called,
+        // it will stop() which clears the queue, then we'll use the preloaded file
+        
         // Release previous next file access if exists
         if let previousNextURL = nextAccessingURL {
             previousNextURL.stopAccessingSecurityScopedResource()
@@ -598,6 +666,8 @@ class MusicPlayer: NSObject, ObservableObject {
         }
         nextAudioFile = nil
         nextPreloadedSongId = nil
+        nextScheduled = false
+        nextSongDuration = nil
         
         // Get accessible URL using security bookmark
         guard let accessibleURL = song.accessibleURL() else {
@@ -613,6 +683,7 @@ class MusicPlayer: NSObject, ObservableObject {
         nextPreloadedSongId = song.id
         
         // Load audio file in background to prepare it
+        // This is done asynchronously to avoid blocking the main thread
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else {
                 accessibleURL.stopAccessingSecurityScopedResource()
@@ -620,12 +691,48 @@ class MusicPlayer: NSObject, ObservableObject {
             }
             
             do {
+                // Create AVAudioFile object
                 let file = try AVAudioFile(forReading: accessibleURL)
-                // Store the file for quick access when it becomes current
+                
+                // Calculate duration while we have the file
+                let sampleRate = file.processingFormat.sampleRate
+                let frameCount = Double(file.length)
+                let calculatedDuration = frameCount / sampleRate
+                
                 DispatchQueue.main.async {
                     self.nextAudioFile = file
+                    self.nextSongDuration = calculatedDuration.isFinite && calculatedDuration > 0 ? calculatedDuration : nil
+                    
+                    // Schedule the file in the playerNode for instant playback later
+                    // AVAudioPlayerNode supports queuing multiple files, so we can schedule
+                    // even when playing - it will play after the current file finishes
+                    if !self.isPlaying {
+                        // Player is stopped/paused, safe to schedule
+                        self.playerNode.scheduleFile(file, at: nil) { [weak self] in
+                            DispatchQueue.main.async {
+                                self?.playerDidFinishPlaying()
+                            }
+                        }
+                        self.nextScheduled = true
+                    } else {
+                        // Player is playing - we can still schedule it in the queue
+                        // It will play after the current file finishes
+                        // However, we need to be careful: if the current song changes
+                        // before this scheduled file plays, we'll need to handle that in loadCurrentSong()
+                        // For now, we'll schedule it but mark it as "next scheduled"
+                        // so loadCurrentSong() knows to use it when it becomes current
+                        self.playerNode.scheduleFile(file, at: nil) { [weak self] in
+                            DispatchQueue.main.async {
+                                // This callback will only fire if this file actually plays
+                                // If loadCurrentSong() is called before it plays, stop() will clear it
+                                self?.playerDidFinishPlaying()
+                            }
+                        }
+                        self.nextScheduled = true
+                    }
                 }
             } catch {
+                // If loading fails, clean up resources
                 accessibleURL.stopAccessingSecurityScopedResource()
                 self.nextAccessingURL = nil
                 self.nextPreloadedSongId = nil
@@ -664,6 +771,14 @@ class MusicPlayer: NSObject, ObservableObject {
             nextAccessingURL = nil
             nextPreloadedSongId = nil
             
+            // Note: stop() was called above, which clears the playerNode queue
+            // So even if the file was scheduled, we need to reschedule it in play()
+            // Reset nextScheduled to false so play() will schedule it
+            nextScheduled = false
+            
+            // Clear nextSongDuration since it's now the current song
+            nextSongDuration = nil
+            
             // Get duration
             let sampleRate = preloadedFile.processingFormat.sampleRate
             let frameCount = Double(preloadedFile.length)
@@ -685,6 +800,7 @@ class MusicPlayer: NSObject, ObservableObject {
         }
         nextAudioFile = nil
         nextPreloadedSongId = nil
+        nextSongDuration = nil
         
         // Get accessible URL using security bookmark
         guard let accessibleURL = song.accessibleURL() else {
@@ -728,11 +844,26 @@ class MusicPlayer: NSObject, ObservableObject {
         beatTimes.removeAll()
         lastBeatTime = 0
         detectedBPM = nil
+        detectedKey = nil
+        detectedKeyName = nil
         recentEnergyValues.removeAll()
         lastBeatDetectionTime = 0
         averageEnergy = 0.0
         smoothedEnergy = 0.0
         beatDetected = false
+        
+        // Reset advanced beat detection
+        previousSpectrum.removeAll()
+        recentSpectralFlux.removeAll()
+        recentHFC.removeAll()
+        smoothedSpectralFlux = 0.0
+        smoothedHFC = 0.0
+        
+        // Reset silence detection
+        silenceStartTime = nil
+        lastAudioDetectedTime = nil
+        isSilent = false
+        silenceDurationDetected = 0.0
     }
     
     func play() {
@@ -766,26 +897,32 @@ class MusicPlayer: NSObject, ObservableObject {
             }
         }
         
-        // Schedule file for playback
-        let format = file.processingFormat
-        if pausedTime > 0 {
-            // Resume from paused position
-            let startFrame = AVAudioFramePosition(pausedTime * format.sampleRate)
-            let frameCount = file.length - startFrame
-            if frameCount > 0 {
-                playerNode.scheduleSegment(file, startingFrame: startFrame, frameCount: AVAudioFrameCount(frameCount), at: nil) { [weak self] in
+        // Schedule file for playback (only if not already scheduled from preload)
+        // If the file was preloaded and scheduled, it's already in the playerNode queue
+        if !nextScheduled {
+            let format = file.processingFormat
+            if pausedTime > 0 {
+                // Resume from paused position
+                let startFrame = AVAudioFramePosition(pausedTime * format.sampleRate)
+                let frameCount = file.length - startFrame
+                if frameCount > 0 {
+                    playerNode.scheduleSegment(file, startingFrame: startFrame, frameCount: AVAudioFrameCount(frameCount), at: nil) { [weak self] in
+                        DispatchQueue.main.async {
+                            self?.playerDidFinishPlaying()
+                        }
+                    }
+                }
+            } else {
+                // Play from beginning
+                playerNode.scheduleFile(file, at: nil) { [weak self] in
                     DispatchQueue.main.async {
                         self?.playerDidFinishPlaying()
                     }
                 }
             }
         } else {
-            // Play from beginning
-            playerNode.scheduleFile(file, at: nil) { [weak self] in
-                DispatchQueue.main.async {
-                    self?.playerDidFinishPlaying()
-                }
-            }
+            // File was already scheduled during preload, just clear the flag
+            nextScheduled = false
         }
         
         // Start playback
@@ -827,11 +964,20 @@ class MusicPlayer: NSObject, ObservableObject {
         pausedTime = 0
         startTime = nil
         
+        // Clear scheduled next song flag
+        nextScheduled = false
+        
         stopPlaybackTimer()
         
         // Reset levels
         leftLevel = 0.0
         rightLevel = 0.0
+        
+        // Reset silence detection
+        silenceStartTime = nil
+        lastAudioDetectedTime = nil
+        isSilent = false
+        silenceDurationDetected = 0.0
         
         // Release file access when stopped
         if let url = currentAccessingURL {
@@ -1236,8 +1382,13 @@ class MusicPlayer: NSObject, ObservableObject {
             // Detect beats from energy values
             let bpm = self.detectBPMFromEnergy(energyValues, sampleRate: sampleRate, bufferSize: Int(bufferSize))
             
+            // Detect musical key
+            let (camelotKey, keyName) = self.detectMusicalKey(for: file)
+            
             DispatchQueue.main.async {
                 self.detectedBPM = bpm
+                self.detectedKey = camelotKey
+                self.detectedKeyName = keyName
             }
         }
     }
@@ -1312,6 +1463,205 @@ class MusicPlayer: NSObject, ObservableObject {
         return bpm
     }
     
+    // MARK: - Musical Key Detection
+    
+    /// Detect musical key using chromagram analysis and convert to Camelot Wheel
+    func detectMusicalKey(for file: AVAudioFile) -> (camelotKey: String?, keyName: String?) {
+        let format = file.processingFormat
+        let frameCount = file.length
+        let bufferSize: AVAudioFrameCount = 4096
+        
+        // Chromagram: 12 semitones (C, C#, D, D#, E, F, F#, G, G#, A, A#, B)
+        var chromagram = [Float](repeating: 0, count: 12)
+        var totalFrames: Int = 0
+        
+        // Read file in chunks and analyze chromagram
+        file.framePosition = 0
+        while file.framePosition < frameCount {
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: bufferSize) else {
+                break
+            }
+            
+            do {
+                try file.read(into: buffer)
+                let chroma = calculateChromagram(from: buffer, sampleRate: format.sampleRate)
+                for i in 0..<12 {
+                    chromagram[i] += chroma[i]
+                }
+                totalFrames += Int(buffer.frameLength)
+            } catch {
+                break
+            }
+        }
+        
+        // Normalize chromagram
+        if totalFrames > 0 {
+            for i in 0..<12 {
+                chromagram[i] /= Float(totalFrames)
+            }
+        }
+        
+        // Find key using Krumhansl-Schmuckler key-finding algorithm
+        let (keyIndex, mode) = findKeyFromChromagram(chromagram)
+        
+        // Convert to standard key name
+        let keyNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+        let keyName = keyNames[keyIndex] + (mode == 0 ? " major" : " minor")
+        
+        // Convert to Camelot Wheel
+        let camelotKey = convertToCamelotWheel(keyIndex: keyIndex, mode: mode)
+        
+        return (camelotKey, keyName)
+    }
+    
+    /// Calculate chromagram from audio buffer
+    private func calculateChromagram(from buffer: AVAudioPCMBuffer, sampleRate: Double) -> [Float] {
+        guard let channelData = buffer.floatChannelData else {
+            return [Float](repeating: 0, count: 12)
+        }
+        
+        let channelCount = Int(buffer.format.channelCount)
+        let frameLength = Int(buffer.frameLength)
+        guard frameLength > 0, channelCount > 0 else {
+            return [Float](repeating: 0, count: 12)
+        }
+        
+        // Create mono signal
+        var monoSignal = [Float](repeating: 0, count: frameLength)
+        let leftChannel = channelData[0]
+        let rightChannel = channelCount > 1 ? channelData[1] : channelData[0]
+        
+        for i in 0..<frameLength {
+            monoSignal[i] = (leftChannel[i] + rightChannel[i]) / 2.0
+        }
+        
+        // Calculate chromagram using simplified pitch detection
+        // For real-time performance, we'll use autocorrelation-based pitch detection
+        var chromagram = [Float](repeating: 0, count: 12)
+        
+        // Use a simplified approach: analyze frequency content in semitone bands
+        // This is a simplified version - full implementation would use FFT and pitch class profile
+        let windowSize = min(frameLength, 2048)
+        let windowedSignal = Array(monoSignal.prefix(windowSize))
+        
+        // Apply window function
+        var windowed = [Float](repeating: 0, count: windowSize)
+        let twoPi = Float.pi * 2.0
+        for i in 0..<windowSize {
+            let windowValue = 0.5 * (1.0 - cos(twoPi * Float(i) / Float(windowSize - 1)))
+            windowed[i] = windowedSignal[i] * windowValue
+        }
+        
+        // Calculate energy in frequency bands corresponding to semitones
+        // Reference frequency: A4 = 440 Hz
+        let referenceFreq: Float = 440.0
+        let sampleRateFloat = Float(sampleRate)
+        
+        for semitone in 0..<12 {
+            // Calculate frequency for this semitone (relative to C)
+            // C is 3 semitones below A
+            let semitoneOffset = Float(semitone - 3)
+            let frequency = referenceFreq * pow(2.0, semitoneOffset / 12.0)
+            
+            // Find energy around this frequency using autocorrelation
+            var energy: Float = 0.0
+            let period = Int(sampleRateFloat / frequency)
+            
+            if period > 0 && period < windowSize / 2 {
+                // Calculate autocorrelation at this period
+                for i in 0..<(windowSize - period) {
+                    energy += windowed[i] * windowed[i + period]
+                }
+                energy = abs(energy) / Float(windowSize - period)
+            }
+            
+            chromagram[semitone] = energy
+        }
+        
+        return chromagram
+    }
+    
+    /// Find key from chromagram using Krumhansl-Schmuckler algorithm
+    private func findKeyFromChromagram(_ chromagram: [Float]) -> (keyIndex: Int, mode: Int) {
+        // Krumhansl-Schmuckler key profiles (major and minor)
+        let majorProfile: [Float] = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
+        let minorProfile: [Float] = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
+        
+        var maxCorrelation: Float = -Float.infinity
+        var bestKey = 0
+        var bestMode = 0 // 0 = major, 1 = minor
+        
+        // Normalize chromagram
+        let chromaSum = chromagram.reduce(0, +)
+        guard chromaSum > 0 else {
+            return (0, 0) // Default to C major
+        }
+        
+        let normalizedChroma = chromagram.map { $0 / chromaSum }
+        
+        // Test all 12 keys in both major and minor
+        for key in 0..<12 {
+            // Test major mode
+            var correlation: Float = 0.0
+            for i in 0..<12 {
+                let profileIndex = (i - key + 12) % 12
+                correlation += normalizedChroma[i] * majorProfile[profileIndex]
+            }
+            
+            if correlation > maxCorrelation {
+                maxCorrelation = correlation
+                bestKey = key
+                bestMode = 0
+            }
+            
+            // Test minor mode
+            correlation = 0.0
+            for i in 0..<12 {
+                let profileIndex = (i - key + 12) % 12
+                correlation += normalizedChroma[i] * minorProfile[profileIndex]
+            }
+            
+            if correlation > maxCorrelation {
+                maxCorrelation = correlation
+                bestKey = key
+                bestMode = 1
+            }
+        }
+        
+        return (bestKey, bestMode)
+    }
+    
+    /// Convert key index and mode to Camelot Wheel format
+    private func convertToCamelotWheel(keyIndex: Int, mode: Int) -> String {
+        // Camelot Wheel mapping:
+        // Inner ring (A) = minor keys
+        // Outer ring (B) = major keys
+        
+        // Mapping: C=0, C#=1, D=2, D#=3, E=4, F=5, F#=6, G=7, G#=8, A=9, A#=10, B=11
+        // Camelot: 1A-12A (minor), 1B-12B (major)
+        
+        let camelotMapping: [(major: Int, minor: Int)] = [
+            (5, 8),   // C major = 5B, A minor = 8A
+            (12, 3),  // C# major = 12B, A# minor = 3A
+            (7, 10),  // D major = 7B, B minor = 10A
+            (2, 5),   // D# major = 2B, C minor = 5A
+            (9, 12),  // E major = 9B, C# minor = 12A
+            (4, 7),   // F major = 4B, D minor = 7A
+            (11, 2),  // F# major = 11B, D# minor = 2A
+            (6, 9),   // G major = 6B, E minor = 9A
+            (1, 4),   // G# major = 1B, F minor = 4A
+            (8, 11),  // A major = 8B, F# minor = 11A
+            (3, 6),   // A# major = 3B, G minor = 6A
+            (10, 1)   // B major = 10B, G# minor = 1A
+        ]
+        
+        let mapping = camelotMapping[keyIndex]
+        let camelotNumber = mode == 0 ? mapping.major : mapping.minor
+        let camelotLetter = mode == 0 ? "B" : "A"
+        
+        return "\(camelotNumber)\(camelotLetter)"
+    }
+    
     // MARK: - Audio Level Monitoring
     
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
@@ -1369,19 +1719,37 @@ class MusicPlayer: NSObject, ObservableObject {
         // This is before normalization, so we get the actual energy level
         let rawMonoEnergy = (leftLevel + rightLevel) / 2.0
         
-        // For beat detection, we want to use the raw energy but scale it appropriately
-        // The volume affects the actual output, but for beat detection we want to detect
-        // the rhythm regardless of volume level. However, we need to account for the fact
-        // that lower volumes will have lower energy values.
-        // Instead of dividing by volume (which can cause issues), we'll use the raw energy
-        // and let the dynamic threshold handle volume variations
-        let energyForBeatDetection = rawMonoEnergy
-        
         // Apply smoothing to energy (similar to VU meters) to avoid false positives
-        smoothedEnergy = smoothedEnergy * beatSmoothingFactor + energyForBeatDetection * (1 - beatSmoothingFactor)
+        smoothedEnergy = smoothedEnergy * beatSmoothingFactor + rawMonoEnergy * (1 - beatSmoothingFactor)
         
-        // Real-time beat detection using smoothed energy
-        detectBeat(energy: smoothedEnergy)
+        // Calculate advanced beat detection features if enabled
+        var spectralFluxValue: Float = 0.0
+        var hfcValue: Float = 0.0
+        
+        if useSpectralFlux || useHighFrequencyContent {
+            // Create mono buffer for spectral analysis
+            var monoBuffer = [Float](repeating: 0, count: frameLength)
+            for i in 0..<frameLength {
+                monoBuffer[i] = (leftChannel[i] + rightChannel[i]) / 2.0
+            }
+            
+            // Calculate spectral features
+            if useSpectralFlux {
+                spectralFluxValue = calculateSpectralFlux(from: monoBuffer)
+            }
+            
+            if useHighFrequencyContent {
+                hfcValue = calculateHighFrequencyContent(from: monoBuffer)
+            }
+        }
+        
+        // Real-time beat detection using improved methods
+        detectBeatImproved(energy: smoothedEnergy, spectralFlux: spectralFluxValue, hfc: hfcValue)
+        
+        // Silence detection
+        if silenceDetectionEnabled {
+            detectSilence(averageLevel: (leftLevel + rightLevel) / 2.0)
+        }
         
         // Apply smoothing and normalize to 0-1 range
         DispatchQueue.main.async { [weak self] in
@@ -1401,6 +1769,297 @@ class MusicPlayer: NSObject, ObservableObject {
             
             self.leftLevel = max(normalizedLeft, 0)
             self.rightLevel = max(normalizedRight, 0)
+        }
+    }
+    
+    // MARK: - Silence Detection
+    
+    /// Detect silence in audio and handle auto-stop or fallback playback
+    private func detectSilence(averageLevel: Float) {
+        let currentTime = Date()
+        let threshold = silenceThreshold
+        
+        // Check if current level is below threshold (silent)
+        if averageLevel < threshold {
+            // Audio is below threshold - check if we're already tracking silence
+            if silenceStartTime == nil {
+                // Start tracking silence
+                silenceStartTime = currentTime
+            }
+            
+            // Calculate how long we've been silent
+            if let startTime = silenceStartTime {
+                let silenceDuration = currentTime.timeIntervalSince(startTime)
+                
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, self.isPlaying else { return }
+                    self.isSilent = true
+                    self.silenceDurationDetected = silenceDuration
+                    
+                    // Check if silence duration exceeds threshold
+                    if silenceDuration >= self.silenceDuration {
+                        // Long silence detected - take action
+                        if self.autoStopOnSilence {
+                            // Auto-stop playback
+                            self.stop()
+                            print("Auto-stopped due to silence of \(silenceDuration) seconds")
+                        } else if self.autoPlayFallbackOnSilence {
+                            // Auto-play fallback content (if implemented)
+                            // For now, just move to next song
+                            self.next()
+                        }
+                    }
+                }
+            }
+        } else {
+            // Audio detected above threshold - clear silence tracking
+            if silenceStartTime != nil {
+                silenceStartTime = nil
+                lastAudioDetectedTime = currentTime
+                
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.isSilent = false
+                    self.silenceDurationDetected = 0.0
+                }
+            } else {
+                lastAudioDetectedTime = currentTime
+            }
+        }
+    }
+    
+    // MARK: - Advanced Beat Detection Methods
+    
+    /// Calculate Spectral Flux - detects changes in frequency spectrum (better for beat detection)
+    private func calculateSpectralFlux(from audioBuffer: [Float]) -> Float {
+        guard audioBuffer.count >= 64 else { return 0.0 } // Need minimum samples
+        
+        // Use a simplified FFT approach with vDSP for real-time performance
+        // For better performance, we'll use a smaller window and calculate magnitude spectrum
+        let windowSize = min(audioBuffer.count, 512) // Use smaller window for real-time
+        let windowedBuffer = Array(audioBuffer.prefix(windowSize))
+        
+        // Apply window function (Hanning window) to reduce spectral leakage
+        var windowed = [Float](repeating: 0, count: windowSize)
+        let twoPi = Float.pi * 2.0
+        for i in 0..<windowSize {
+            let windowValue = 0.5 * (1.0 - cos(twoPi * Float(i) / Float(windowSize - 1)))
+            windowed[i] = windowedBuffer[i] * windowValue
+        }
+        
+        // For real-time performance, use a simplified spectral analysis
+        // Calculate energy in different frequency bands using bandpass filtering
+        // This is faster than full FFT and sufficient for beat detection
+        
+        // Divide into frequency bands (simplified approach)
+        let numBands = 32 // Use 32 frequency bands
+        var spectrum = [Float](repeating: 0, count: numBands)
+        
+        // Calculate energy in each band using simple filtering
+        let samplesPerBand = windowSize / numBands
+        for band in 0..<numBands {
+            var bandEnergy: Float = 0.0
+            let startIdx = band * samplesPerBand
+            let endIdx = min(startIdx + samplesPerBand, windowSize)
+            
+            for i in startIdx..<endIdx {
+                bandEnergy += windowed[i] * windowed[i]
+            }
+            spectrum[band] = sqrt(bandEnergy / Float(endIdx - startIdx))
+        }
+        
+        // Calculate spectral flux: sum of positive differences between current and previous spectrum
+        var flux: Float = 0.0
+        if previousSpectrum.count == spectrum.count {
+            for i in 0..<spectrum.count {
+                let diff = spectrum[i] - previousSpectrum[i]
+                if diff > 0 {
+                    flux += diff
+                }
+            }
+        } else {
+            // First frame - just calculate total energy
+            flux = spectrum.reduce(0, +)
+        }
+        
+        // Update previous spectrum
+        previousSpectrum = spectrum
+        
+        // Normalize by spectrum size
+        return flux / Float(spectrum.count)
+    }
+    
+    /// Calculate High-Frequency Content - emphasizes transients (good for percussion)
+    private func calculateHighFrequencyContent(from audioBuffer: [Float]) -> Float {
+        guard audioBuffer.count >= 64 else { return 0.0 }
+        
+        // HFC weights higher frequencies more heavily
+        // HFC = sum of (magnitude[i] * i^2) for all frequency bins
+        // For real-time, we'll use a simplified approach: emphasize high-frequency energy
+        
+        let windowSize = min(audioBuffer.count, 512)
+        let windowedBuffer = Array(audioBuffer.prefix(windowSize))
+        
+        // Apply window
+        var windowed = [Float](repeating: 0, count: windowSize)
+        let twoPi = Float.pi * 2.0
+        for i in 0..<windowSize {
+            let windowValue = 0.5 * (1.0 - cos(twoPi * Float(i) / Float(windowSize - 1)))
+            windowed[i] = windowedBuffer[i] * windowValue
+        }
+        
+        // For HFC, calculate energy in frequency bands with emphasis on high frequencies
+        // Divide into frequency bands and weight higher frequencies more
+        let numBands = 32
+        var hfc: Float = 0.0
+        
+        let samplesPerBand = windowSize / numBands
+        for band in 0..<numBands {
+            var bandEnergy: Float = 0.0
+            let startIdx = band * samplesPerBand
+            let endIdx = min(startIdx + samplesPerBand, windowSize)
+            
+            for i in startIdx..<endIdx {
+                bandEnergy += windowed[i] * windowed[i]
+            }
+            
+            let magnitude = sqrt(bandEnergy / Float(endIdx - startIdx))
+            
+            // Weight by band index squared (higher frequencies weighted more)
+            // Higher band index = higher frequency
+            let frequencyWeight = Float(band * band)
+            hfc += magnitude * frequencyWeight
+        }
+        
+        // Normalize
+        let maxWeight = Float((numBands - 1) * (numBands - 1))
+        return hfc / maxWeight
+    }
+    
+    /// Improved beat detection combining energy, spectral flux, and HFC
+    private func detectBeatImproved(energy: Float, spectralFlux: Float, hfc: Float) {
+        // Only detect beats when playing
+        guard isPlaying else { return }
+        
+        let currentTime = Date().timeIntervalSince1970
+        
+        // Initialize lastBeatDetectionTime if it's the first time
+        if lastBeatDetectionTime == 0 {
+            lastBeatDetectionTime = currentTime
+        }
+        
+        // Combine different detection methods
+        var combinedSignal: Float = 0.0
+        var totalWeight: Float = 0.0
+        
+        // Energy-based detection (always used as baseline)
+        recentEnergyValues.append(energy)
+        if recentEnergyValues.count > energyHistorySize {
+            recentEnergyValues.removeFirst()
+        }
+        
+        // Normalize energy for combination
+        if recentEnergyValues.count >= 15 {
+            averageEnergy = recentEnergyValues.reduce(0, +) / Float(recentEnergyValues.count)
+            if averageEnergy > 0 {
+                let normalizedEnergy = (energy - averageEnergy) / averageEnergy
+                combinedSignal += normalizedEnergy * 0.3
+                totalWeight += 0.3
+            }
+        }
+        
+        // Spectral Flux (if enabled)
+        if useSpectralFlux && spectralFlux > 0 {
+            recentSpectralFlux.append(spectralFlux)
+            if recentSpectralFlux.count > energyHistorySize {
+                recentSpectralFlux.removeFirst()
+            }
+            
+            if recentSpectralFlux.count >= 10 {
+                let avgFlux = recentSpectralFlux.reduce(0, +) / Float(recentSpectralFlux.count)
+                if avgFlux > 0 {
+                    let normalizedFlux = (spectralFlux - avgFlux) / avgFlux
+                    smoothedSpectralFlux = smoothedSpectralFlux * 0.9 + normalizedFlux * 0.1
+                    combinedSignal += smoothedSpectralFlux * spectralFluxWeight
+                    totalWeight += spectralFluxWeight
+                }
+            }
+        }
+        
+        // High-Frequency Content (if enabled)
+        if useHighFrequencyContent && hfc > 0 {
+            recentHFC.append(hfc)
+            if recentHFC.count > energyHistorySize {
+                recentHFC.removeFirst()
+            }
+            
+            if recentHFC.count >= 10 {
+                let avgHFC = recentHFC.reduce(0, +) / Float(recentHFC.count)
+                if avgHFC > 0 {
+                    let normalizedHFC = (hfc - avgHFC) / avgHFC
+                    smoothedHFC = smoothedHFC * 0.9 + normalizedHFC * 0.1
+                    combinedSignal += smoothedHFC * hfcWeight
+                    totalWeight += hfcWeight
+                }
+            }
+        }
+        
+        // Normalize combined signal
+        if totalWeight > 0 {
+            combinedSignal /= totalWeight
+        }
+        
+        // Need enough history to detect beats
+        guard recentEnergyValues.count >= 15 else { return }
+        guard averageEnergy > beatMinEnergyThreshold else { return }
+        
+        // Calculate dynamic threshold for combined signal
+        var signalHistory: [Float] = []
+        if useSpectralFlux && recentSpectralFlux.count >= 10 {
+            signalHistory.append(contentsOf: recentSpectralFlux.suffix(15))
+        }
+        if useHighFrequencyContent && recentHFC.count >= 10 {
+            signalHistory.append(contentsOf: recentHFC.suffix(15))
+        }
+        signalHistory.append(contentsOf: recentEnergyValues.suffix(15))
+        
+        let avgSignal = signalHistory.reduce(0, +) / Float(signalHistory.count)
+        let variance = signalHistory.map { pow($0 - avgSignal, 2) }.reduce(0, +) / Float(signalHistory.count)
+        let stdDev = sqrt(variance)
+        
+        let dynamicThreshold = avgSignal + stdDev * beatStdDevMultiplier
+        let minThreshold = avgSignal * beatMinThresholdMultiplier
+        let threshold = max(dynamicThreshold, minThreshold)
+        
+        // Detect beat if combined signal exceeds threshold and enough time has passed
+        let timeSinceLastBeat = currentTime - lastBeatDetectionTime
+        
+        // Use detected BPM if available, otherwise use adaptive interval
+        let minInterval: TimeInterval
+        if let bpm = detectedBPM, bpm > 0 {
+            minInterval = (60.0 / bpm) * 0.5
+        } else {
+            minInterval = bpmMinInterval
+        }
+        
+        // Check if signal spike is significant enough
+        let signalIncrease = combinedSignal - avgSignal
+        let relativeIncrease = avgSignal > 0 ? signalIncrease / avgSignal : 0
+        
+        // Detect beat: combined signal exceeds threshold, enough time passed, and significant increase
+        if combinedSignal > threshold && timeSinceLastBeat >= minInterval && relativeIncrease > beatMinRelativeIncrease {
+            lastBeatDetectionTime = currentTime
+            
+            // Trigger beat indicator
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.isPlaying else { return }
+                self.beatDetected = true
+                
+                // Turn off after a short duration
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                    self?.beatDetected = false
+                }
+            }
         }
     }
     

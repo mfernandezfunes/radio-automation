@@ -58,10 +58,17 @@ Este documento detalla las mejoras propuestas para convertir Musica Player en un
   - Reglas de rotación de canciones
   - Reglas de crossfade automático
 
-- [ ] **Detección de Silencios**
-  - Detección automática de silencios en audio
-  - Auto-stop en silencios largos
-  - Auto-play de contenido de respaldo
+- [x] **Detección de Silencios** - ✅ **IMPLEMENTADO**
+  - ✅ Detección automática de silencios en audio - **IMPLEMENTADO**
+    - Monitoreo en tiempo real del nivel RMS de audio
+    - Umbral configurable para detectar silencio
+    - Rastreo de duración de silencios
+  - ✅ Auto-stop en silencios largos - **IMPLEMENTADO**
+    - Detección automática cuando el silencio excede duración configurada
+    - Auto-stop configurable
+  - ⚠️ Auto-play de contenido de respaldo (parcialmente implementado)
+    - Opción para avanzar a siguiente canción en silencio
+    - Sistema completo de playlist de respaldo pendiente
 
 - [ ] **Sistema de Fallback**
   - Playlist de respaldo automática
@@ -69,10 +76,165 @@ Este documento detalla las mejoras propuestas para convertir Musica Player en un
   - Notificaciones de fallos
 
 - [ ] **Auto-Mix Inteligente**
-  - Detección automática de BPM para mixing
-  - Sugerencias de canciones compatibles
-  - Crossfade automático basado en BPM
-  - Detección de clave musical para mixing armónico
+  - **Descripción**: Sistema avanzado de mezcla automática que analiza características musicales de las canciones para crear transiciones perfectas y profesionales entre tracks.
+  
+  - **Componentes Técnicos**:
+    - **Detección de BPM**: Ya implementado. Análisis automático del tempo de cada canción.
+    - **Detección de Clave Musical**: Análisis espectral para identificar la tonalidad (C, D, E, etc. y modo mayor/menor).
+    - **Análisis de Energía**: Cálculo de niveles de energía por secciones (intro, build, drop, outro).
+    - **Análisis Espectral**: FFT para identificar frecuencias dominantes y características espectrales.
+    - **Sistema de Scoring**: Algoritmo que calcula compatibilidad entre canciones basado en múltiples factores.
+  
+  - **Algoritmo de Matching**:
+    - **BPM Matching**: 
+      - Compatibilidad perfecta: ±0 BPM (mismo tempo)
+      - Compatibilidad alta: ±5 BPM (ajuste automático de velocidad)
+      - Compatibilidad media: ±10 BPM (ajuste con variación)
+      - Ajuste automático de `playbackRate` para sincronización
+    - **Harmonic Mixing (Camelot Wheel)**:
+      - Detección de clave musical (ej: A minor, C major)
+      - Conversión a sistema Camelot (1A-12B)
+      - Compatibilidad: misma clave, +1/-1, o +7/-7 (relaciones armónicas)
+    - **Energy Matching**:
+      - Análisis de energía promedio de la canción
+      - Transiciones suaves: bajo→medio→alto
+      - Evitar saltos abruptos de energía
+    - **Genre/Style Matching**:
+      - Análisis de características espectrales
+      - Matching por género musical
+      - Compatibilidad de estilo (house, techno, pop, etc.)
+  
+  - **Sistema de Sugerencias**:
+    - Cálculo de score de compatibilidad para cada canción disponible
+    - Filtrado por reglas (no repetir artista, género, etc.)
+    - Ranking de mejores opciones
+    - Visualización de compatibilidad en UI (indicadores de color/score)
+    - Auto-selección de mejor opción cuando está habilitado
+  
+  - **Transiciones Automáticas**:
+    - **Ajuste de BPM**: Sincronización automática de tempos durante crossfade
+      - Calcular diferencia de BPM entre canciones
+      - Ajustar velocidad de siguiente canción gradualmente
+      - Mantener sincronización durante crossfade
+      - Restaurar velocidad normal después de transición
+    - **Duración Óptima de Crossfade**:
+      - Basada en compatibilidad de BPM (más largo si hay ajuste)
+      - Basada en puntos de transición detectados
+      - Mínimo: 3 segundos, Máximo: 8 segundos
+    - **Puntos de Transición**:
+      - Detección automática de intros/outros
+      - Transición en puntos de menor energía
+      - Evitar cortes en medio de frases musicales
+  
+  - **Implementación Técnica**:
+    ```swift
+    // Estructura de compatibilidad
+    struct SongCompatibility {
+        let song: Song
+        let bpmMatch: Double          // Diferencia en BPM (0 = perfecto)
+        let keyMatch: Bool            // Claves compatibles armónicamente
+        let energyMatch: Double       // Compatibilidad de energía (0-1)
+        let genreMatch: Double        // Similaridad de género (0-1)
+        let transitionScore: Double   // Score total de transición
+        let totalScore: Double        // Score final de compatibilidad
+    }
+    
+    // Algoritmo de matching
+    func findBestNextSong(from currentSong: Song, 
+                          in playlist: Playlist,
+                          rules: MixingRules) -> SongCompatibility? {
+        // 1. Analizar canción actual
+        let currentAnalysis = analyzeSong(currentSong)
+        
+        // 2. Calcular compatibilidad con todas las canciones
+        let compatibilities = playlist.songs
+            .filter { rules.allows($0) } // Aplicar reglas
+            .map { song in
+                calculateCompatibility(
+                    current: currentAnalysis,
+                    candidate: analyzeSong(song)
+                )
+            }
+        
+        // 3. Retornar mejor opción
+        return compatibilities.max(by: { $0.totalScore < $1.totalScore })
+    }
+    
+    // Transición automática
+    func autoMixTransition(from: Song, to: Song) {
+        let bpmDiff = to.bpm - from.bpm
+        let targetRate = 1.0 + (bpmDiff / from.bpm)
+        
+        // Ajustar velocidad gradualmente durante crossfade
+        adjustPlaybackRate(to: targetRate, duration: crossfadeDuration)
+        applyCrossfade(duration: optimalCrossfadeDuration)
+        restorePlaybackRate(after: crossfadeDuration)
+    }
+    ```
+  
+  - **Detección de Clave Musical**: ✅ **IMPLEMENTADO**
+    - ✅ **Método 1**: Análisis de distribución de notas (chromagram) - Implementado
+    - ✅ Algoritmo Krumhansl-Schmuckler para identificación de clave
+    - ✅ Conversión automática a sistema Camelot Wheel (1A-12B)
+    - ✅ Detección de modo mayor/menor
+    - ✅ Visualización en UI junto al BPM
+    - ✅ Análisis automático al cargar canción (junto con BPM)
+    - ❌ Almacenar clave en metadata de cada canción (pendiente - cache)
+    - ❌ **Método 2**: Análisis de acordes dominantes (pendiente)
+    - ❌ **Método 3**: Uso de librerías especializadas (librosa, Essentia) (pendiente)
+  
+  - **Configuración y Control**:
+    - Toggle para activar/desactivar auto-mix
+    - Nivel de agresividad (conservador, medio, agresivo)
+    - Reglas personalizables de matching
+    - Override manual cuando sea necesario
+    - Visualización de sugerencias en tiempo real
+  
+  - **Casos de Uso**:
+    - **DJ Automático**: Selección automática de siguiente canción
+    - **Asistente de DJ**: Sugerencias mientras el DJ elige manualmente
+    - **Radio Automatizada**: Transiciones perfectas sin intervención
+    - **Preparación de Sets**: Generar playlists con transiciones optimizadas
+  
+  - **Beneficios**:
+    - Transiciones profesionales y suaves
+    - Mejor flujo musical continuo
+    - Reducción de trabajo manual
+    - Experiencia de escucha más coherente
+    - Menos errores en transiciones
+    - Posibilidad de operación 24/7 sin DJ
+  
+  - **Estado Actual**:
+    - ✅ Detección de BPM implementada
+    - ✅ Sistema de crossfade implementado
+    - ✅ Análisis de energía básico
+    - ✅ Precarga de archivos
+    - ✅ **Detección de clave musical (Camelot Wheel) - IMPLEMENTADO**
+      - Análisis cromático (chromagram) para detectar tonalidad
+      - Algoritmo Krumhansl-Schmuckler para identificación de clave
+      - Conversión automática a sistema Camelot (1A-12B)
+      - Visualización de clave junto al BPM en la UI
+      - Detección de modo mayor/menor
+    - ✅ **Mejora en detección de beats en tiempo real - IMPLEMENTADO**
+      - Spectral Flux para detectar cambios espectrales
+      - High-Frequency Content (HFC) para percusión
+      - Detección combinada multi-método
+      - Parámetros configurables (pesos, activación/desactivación)
+    - ✅ **Precarga y scheduling mejorado - IMPLEMENTADO**
+      - Precarga automática cuando se marca canción como "next"
+      - Scheduling inmediato en playerNode
+      - Visualización de duración de siguiente canción
+      - Panel "NEXT:" en la UI mostrando información
+    - ❌ Algoritmo de matching (pendiente)
+    - ❌ Ajuste automático de BPM (pendiente)
+    - ❌ Sistema de sugerencias (pendiente)
+  
+  - **Complejidad de Implementación**: Media-Alta
+  - **Tiempo Estimado**: 2-4 semanas de desarrollo
+  - **Dependencias Potenciales**: 
+    - Librerías de análisis de audio (librosa wrapper, Essentia, o implementación propia)
+    - Algoritmos de FFT para análisis espectral
+    - Base de datos para almacenar análisis de canciones
 
 ### 4. Interfaz y Visualización
 
@@ -194,11 +356,12 @@ Este documento detalla las mejoras propuestas para convertir Musica Player en un
   - Phaser
   - Distortion (para efectos especiales)
 
-- [ ] **Mejoras de Detección**
-  - Detección de clave musical
-  - Detección de género automática
-  - Análisis de energía espectral
-  - Detección de intros/outros automática
+- [x] **Mejoras de Detección**
+  - ✅ Detección de clave musical (Camelot Wheel) - **IMPLEMENTADO**
+  - ✅ Detección de beats mejorada (Spectral Flux + HFC) - **IMPLEMENTADO**
+  - ❌ Detección de género automática (pendiente)
+  - ✅ Análisis de energía espectral (implementado en beat detection)
+  - ❌ Detección de intros/outros automática (pendiente)
 
 ### 10. Automatización de Transiciones
 
@@ -270,11 +433,14 @@ Este documento detalla las mejoras propuestas para convertir Musica Player en un
 
 ### 14. Mejoras de Rendimiento
 
-- [ ] **Optimización**
-  - Caché inteligente de archivos
-  - Precarga optimizada
-  - Reducción de uso de memoria
-  - Optimización de CPU
+- [x] **Optimización**
+  - ✅ Precarga optimizada - **IMPLEMENTADO**
+    - Precarga automática cuando se marca canción como "next"
+    - Scheduling inmediato en playerNode
+    - Visualización de información de siguiente canción
+  - ❌ Caché inteligente de archivos (pendiente)
+  - ❌ Reducción de uso de memoria (pendiente)
+  - ❌ Optimización de CPU (pendiente)
 
 - [ ] **Escalabilidad**
   - Soporte para playlists muy grandes
@@ -414,4 +580,45 @@ Este documento detalla las mejoras propuestas para convertir Musica Player en un
 - **Streaming**: Integrar librerías como libshout o similar
 - **Machine Learning**: Usar Core ML para análisis
 - **Performance**: Optimizar para uso 24/7 sin interrupciones
+
+## ✅ Mejoras Implementadas Recientemente
+
+### Detección de Clave Musical (Camelot Wheel)
+- ✅ Análisis cromático (chromagram) para detectar tonalidad
+- ✅ Algoritmo Krumhansl-Schmuckler para identificación de clave
+- ✅ Conversión automática a sistema Camelot (1A-12B)
+- ✅ Visualización de clave junto al BPM en la UI
+- ✅ Detección de modo mayor/menor
+- ✅ Análisis automático al cargar canción
+
+### Mejora en Detección de Beats en Tiempo Real
+- ✅ Spectral Flux para detectar cambios espectrales
+- ✅ High-Frequency Content (HFC) para percusión
+- ✅ Detección combinada multi-método
+- ✅ Parámetros configurables (pesos, activación/desactivación)
+- ✅ Optimizado para tiempo real con análisis por bandas de frecuencia
+
+### Precarga y Scheduling Mejorado
+- ✅ Precarga automática cuando se marca canción como "next"
+- ✅ Scheduling inmediato en playerNode (incluso durante reproducción)
+- ✅ Visualización de duración de siguiente canción
+- ✅ Panel "NEXT:" en la UI mostrando información completa
+- ✅ Limpieza automática de recursos cuando se desmarca
+
+### Detección Automática de Silencios
+- ✅ Detección en tiempo real de silencios en audio
+- ✅ Monitoreo continuo del nivel RMS
+- ✅ Umbral configurable para detectar silencio (0.001 - 0.1)
+- ✅ Duración configurable antes de actuar (1.0 - 10.0 segundos)
+- ✅ Rastreo de duración de silencios
+- ✅ Auto-stop cuando el silencio excede duración configurada
+- ✅ Opción para avanzar a siguiente canción en silencio
+- ✅ Estado de silencio visible en tiempo real
+- ✅ **Configuración completa en UI** - Sección dedicada en ConfigView
+  - Toggle para activar/desactivar detección
+  - Sliders para umbral y duración
+  - Toggles para acciones (auto-stop o avanzar)
+  - Indicador visual de estado (silencioso/audio detectado)
+  - Duración actual de silencio mostrada en tiempo real
+- ⚠️ Sistema completo de playlist de respaldo (pendiente)
 

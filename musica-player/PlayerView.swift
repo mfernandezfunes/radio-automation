@@ -234,6 +234,40 @@ struct PlayerView: View {
                     .padding(.top, 8)
                 }
                 
+                // Next song info - show when a song is marked as next
+                if let nextIndex = playlist.nextIndex,
+                   nextIndex >= 0 && nextIndex < playlist.items.count {
+                    let nextItem = playlist.items[nextIndex]
+                    if !nextItem.isCommand, let nextSong = nextItem.song {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text("NEXT:")
+                                .font(.system(size: 12, weight: .bold, design: .default))
+                                .foregroundColor(.orange)
+                            Text(nextSong.title)
+                                .font(.system(size: 14, weight: .medium, design: .default))
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                            if let nextDuration = player.nextSongDuration {
+                                Text("• \(formatTime(nextDuration))")
+                                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                                    .foregroundColor(.orange)
+                            }
+                        }
+                        Text(nextSong.artist)
+                            .font(.system(size: 12, weight: .regular, design: .default))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.vertical, 6)
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(6)
+                    .padding(.horizontal)
+                    }
+                }
+                
                 // Advanced playback controls
                 VStack(spacing: 12) {
                     // Main playback controls with VU meters
@@ -395,6 +429,12 @@ struct PlayerView: View {
                                     .foregroundColor(.secondary)
                                 if let bpm = player.detectedBPM {
                                     Text("• \(Int(bpm)) BPM")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .padding(.leading, 8)
+                                }
+                                if let key = player.detectedKey {
+                                    Text("• \(key)")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                         .padding(.leading, 8)
@@ -692,7 +732,13 @@ struct PlayerView: View {
                                 
                                 // Show duration
                                 Group {
-                                    if let duration = getCachedDuration(for: song) {
+                                    // If this is the next song and we have preloaded duration, use it
+                                    if isNextItem, let nextDuration = player.nextSongDuration {
+                                        Text(formatTime(nextDuration))
+                                            .font(.system(.caption, design: .monospaced))
+                                            .foregroundColor(.orange)
+                                            .frame(width: 50, alignment: .trailing)
+                                    } else if let duration = getCachedDuration(for: song) {
                                         Text(formatTime(duration))
                                             .font(.system(.caption, design: .monospaced))
                                             .foregroundColor(.secondary)

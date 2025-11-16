@@ -506,6 +506,147 @@ struct ConfigView: View {
             .padding()
             .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
             .cornerRadius(6)
+            
+            Divider()
+                .padding(.vertical, 8)
+            
+            // Silence Detection Parameters
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Detección de Silencios")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                
+                // Enable/Disable Silence Detection
+                Toggle("Activar Detección de Silencios", isOn: Binding(
+                    get: { player.silenceDetectionEnabled },
+                    set: { player.silenceDetectionEnabled = $0 }
+                ))
+                
+                if player.silenceDetectionEnabled {
+                    // Silence Threshold
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Umbral de Silencio")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(String(format: "%.3f", player.silenceThreshold))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                        }
+                        HStack(spacing: 12) {
+                            Text("0.001")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .frame(width: 40, alignment: .leading)
+                            
+                            Slider(value: Binding(
+                                get: { player.silenceThreshold },
+                                set: { player.silenceThreshold = $0 }
+                            ), in: 0.001...0.1)
+                            
+                            Text("0.1")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .frame(width: 30, alignment: .trailing)
+                        }
+                        Text("Nivel RMS por debajo del cual se considera silencio")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .italic()
+                    }
+                    
+                    // Silence Duration
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Duración de Silencio")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(String(format: "%.1f s", player.silenceDuration))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                        }
+                        HStack(spacing: 12) {
+                            Text("1.0")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .frame(width: 30, alignment: .leading)
+                            
+                            Slider(value: Binding(
+                                get: { player.silenceDuration },
+                                set: { player.silenceDuration = $0 }
+                            ), in: 1.0...10.0)
+                            
+                            Text("10.0")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .frame(width: 30, alignment: .trailing)
+                        }
+                        Text("Tiempo de silencio antes de tomar acción")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .italic()
+                    }
+                    
+                    // Action on Silence
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Acción al Detectar Silencio")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Toggle("Auto-Stop en Silencio", isOn: Binding(
+                            get: { player.autoStopOnSilence },
+                            set: { 
+                                player.autoStopOnSilence = $0
+                                if $0 {
+                                    player.autoPlayFallbackOnSilence = false
+                                }
+                            }
+                        ))
+                        
+                        Toggle("Avanzar a Siguiente Canción", isOn: Binding(
+                            get: { player.autoPlayFallbackOnSilence },
+                            set: { 
+                                player.autoPlayFallbackOnSilence = $0
+                                if $0 {
+                                    player.autoStopOnSilence = false
+                                }
+                            }
+                        ))
+                    }
+                    
+                    // Current Status
+                    if player.isSilent {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                            Text("Silencio detectado: \(String(format: "%.1f", player.silenceDurationDetected))s")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                        .padding(8)
+                        .background(Color.orange.opacity(0.1))
+                        .cornerRadius(4)
+                    } else {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                            Text("Audio detectado")
+                                .font(.caption)
+                                .foregroundColor(.green)
+                        }
+                        .padding(8)
+                        .background(Color.green.opacity(0.1))
+                        .cornerRadius(4)
+                    }
+                }
+            }
+            .padding()
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+            .cornerRadius(6)
         }
         .padding()
         .background(Color(NSColor.controlBackgroundColor))

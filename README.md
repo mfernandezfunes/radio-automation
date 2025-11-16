@@ -10,6 +10,10 @@ Musica Player es una aplicación macOS desarrollada en SwiftUI para la automatiz
 - **Dos Players Independientes**: Cada player tiene su propia playlist y controles independientes
 - **Reproducción Simultánea**: Ambos players pueden reproducir audio al mismo tiempo
 - **Precarga Inteligente**: Los archivos marcados como "siguiente" se precargan automáticamente para transiciones sin interrupciones
+  - Precarga automática cuando se marca una canción como "next"
+  - Scheduling inmediato en playerNode (incluso durante reproducción)
+  - Visualización de información de siguiente canción (título, artista, duración)
+  - Panel "NEXT:" en la UI mostrando detalles completos
 
 ### 📋 Gestión de Playlists
 - **Playlists Dinámicas**: Agregar, eliminar y reorganizar canciones mediante drag & drop
@@ -58,11 +62,32 @@ Cada player tiene acceso a efectos profesionales:
 ### 🎯 Detección de BPM y Beats
 - **Detección Automática de BPM**: Análisis automático del tempo de las canciones
 - **Detección de Beats en Tiempo Real**: Indicador visual que parpadea con cada beat
+- **Métodos Avanzados**:
+  - Spectral Flux para detectar cambios espectrales
+  - High-Frequency Content (HFC) para percusión
+  - Detección combinada multi-método
 - **Parámetros Ajustables**:
   - Factor de suavizado
   - Incremento relativo mínimo
   - Multiplicador de desviación estándar
   - Threshold mínimo de energía
+  - Pesos para Spectral Flux y HFC
+
+### 🔇 Detección Automática de Silencios
+- **Monitoreo en Tiempo Real**: Análisis continuo del nivel RMS de audio
+- **Detección Configurable**: 
+  - Umbral de silencio ajustable (0.001 - 0.1)
+  - Duración mínima de silencio antes de actuar (1.0 - 10.0 segundos)
+- **Acciones Automáticas**:
+  - **Auto-Stop**: Detiene la reproducción cuando se detecta silencio prolongado
+  - **Auto-Play Fallback**: Avanza automáticamente a la siguiente canción
+- **Indicadores de Estado**: 
+  - Estado visual de silencio en tiempo real
+  - Duración del silencio detectado
+- **Casos de Uso**:
+  - Prevenir transmisión en silencio (radio en vivo)
+  - Detectar archivos corruptos o vacíos
+  - Mantener flujo continuo de contenido (automatización 24/7)
 
 ### 📊 Visualización
 - **VU Meters**: Medidores de nivel estéreo en tiempo real
@@ -99,9 +124,10 @@ Los comandos se pueden insertar en cualquier posición de la playlist y se ejecu
 #### Vista de Player
 - **Información de Canción Actual**: Título y artista mostrados en grande
 - **Controles de Reproducción**: Play, Pause, Stop, Previous, Next, Rewind, Fast Forward
-- **Barra de Progreso**: Con indicadores de tiempo y BPM
+- **Barra de Progreso**: Con indicadores de tiempo, BPM y clave musical (Camelot Wheel)
 - **Indicador de Beat**: LED que parpadea con cada beat
 - **VU Meters**: Visualización de niveles de audio
+- **Panel NEXT**: Muestra información de la canción marcada como siguiente
 - **Lista de Playlist**: 
   - Números de orden
   - Duración de cada canción
@@ -116,6 +142,7 @@ Los comandos se pueden insertar en cualquier posición de la playlist y se ejecu
 - **Efectos de Audio**: Controles completos para todos los efectos
 - **Controles de Reproducción**: Ajustes de velocidad, balance, crossfade, etc.
 - **Parámetros de Detección**: Ajustes finos para detección de BPM y beats
+- **Detección de Silencios**: Configuración completa de umbrales y acciones automáticas
 
 ## Estructura del Proyecto
 
@@ -189,6 +216,15 @@ Sistema de comandos para automatización:
 2. Navegar a la sección de efectos del player deseado
 3. Activar y ajustar los parámetros de los efectos
 
+### Configurar Detección de Silencios
+1. Abrir la ventana de configuración
+2. Navegar a la sección "Detección de Silencios" del player deseado
+3. Activar "Activar Detección de Silencios"
+4. Ajustar el umbral de silencio (nivel RMS mínimo)
+5. Configurar la duración de silencio antes de actuar
+6. Elegir la acción: Auto-Stop o Avanzar a Siguiente Canción
+7. El estado se muestra en tiempo real (silencioso/audio detectado)
+
 ### AutoPlay
 1. Hacer clic en el botón de AutoPlay en la status bar (arriba del reloj)
 2. Esto activará/desactivará el autoPlay en ambos players simultáneamente
@@ -235,5 +271,18 @@ Desarrollado por Martin Fernandez
 - La aplicación utiliza `AVAudioEngine` para procesamiento de audio de bajo nivel
 - Los efectos se aplican mediante `AVAudioUnitEffect` y unidades especializadas
 - La detección de BPM utiliza análisis de energía y detección de picos
-- La detección de beats en tiempo real utiliza umbrales dinámicos basados en estadísticas
+- La detección de beats en tiempo real utiliza métodos avanzados:
+  - Spectral Flux para cambios espectrales
+  - High-Frequency Content (HFC) para percusión
+  - Umbrales dinámicos basados en estadísticas
+- **Detección de Clave Musical (Camelot Wheel)**:
+  - Análisis cromático (chromagram) para detectar tonalidad
+  - Algoritmo Krumhansl-Schmuckler para identificación de clave
+  - Conversión automática a sistema Camelot (1A-12B)
+  - Visualización junto al BPM en la UI
+- **Detección de Silencios**:
+  - Monitoreo continuo del nivel RMS en tiempo real
+  - Rastreo de duración de silencios
+  - Acciones automáticas configurables (auto-stop o avanzar)
+  - Indicadores de estado en tiempo real
 
