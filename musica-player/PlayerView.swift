@@ -309,6 +309,23 @@ struct PlayerView: View {
                                 Text(player.formatTime(player.duration))
                                     .font(.caption)
                                     .foregroundColor(.secondary)
+                                if let bpm = player.detectedBPM {
+                                    Text("• \(Int(bpm)) BPM")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .padding(.leading, 8)
+                                }
+                                // Beat indicator LED - more visible
+                                Circle()
+                                    .fill(player.beatDetected ? Color.red : Color.gray.opacity(0.3))
+                                    .frame(width: 10, height: 10)
+                                    .overlay(
+                                        Circle()
+                                            .stroke(player.beatDetected ? Color.red.opacity(0.5) : Color.clear, lineWidth: 2)
+                                            .scaleEffect(player.beatDetected ? 1.5 : 1.0)
+                                    )
+                                    .padding(.leading, 8)
+                                    .animation(.easeOut(duration: 0.1), value: player.beatDetected)
                             }
                         }
                         .padding(.horizontal)
@@ -431,6 +448,53 @@ struct PlayerView: View {
                                 : Color.clear
                         )
                         .contentShape(Rectangle())
+                        .contextMenu {
+                            Button(action: {
+                                // Stop current playback and play this song now
+                                player.stop()
+                                playlist.currentIndex = index
+                                player.loadCurrentSong()
+                                player.play()
+                            }) {
+                                Label("Parar y Reproducir Ahora", systemImage: "play.fill")
+                            }
+                            
+                            Button(action: {
+                                // Set as next song
+                                playlist.setNextIndex(index)
+                            }) {
+                                Label("Reproducir Siguiente", systemImage: "forward.fill")
+                            }
+                            
+                            Divider()
+                            
+                            if index > 0 {
+                                Button(action: {
+                                    // Move song up one position
+                                    playlist.moveSong(from: IndexSet(integer: index), to: index - 1)
+                                }) {
+                                    Label("Subir uno en la lista", systemImage: "arrow.up")
+                                }
+                            }
+                            
+                            if index < playlist.songs.count - 1 {
+                                Button(action: {
+                                    // Move song down one position
+                                    playlist.moveSong(from: IndexSet(integer: index), to: index + 2)
+                                }) {
+                                    Label("Bajar uno en la lista", systemImage: "arrow.down")
+                                }
+                            }
+                            
+                            Divider()
+                            
+                            Button(role: .destructive, action: {
+                                // Remove song from playlist
+                                playlist.removeSong(at: index)
+                            }) {
+                                Label("Eliminar de la lista", systemImage: "trash")
+                            }
+                        }
                         .onTapGesture(count: 2) {
                             // Mark this song as next to play
                             playlist.setNextIndex(index)

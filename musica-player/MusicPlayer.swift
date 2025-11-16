@@ -22,6 +22,8 @@ class MusicPlayer: NSObject, ObservableObject {
     @Published var autoPlayNext: Bool = false // Auto-continue to next song when current finishes
     @Published var leftLevel: Float = 0.0
     @Published var rightLevel: Float = 0.0
+    @Published var detectedBPM: Double? = nil // Detected beats per minute
+    @Published var beatDetected: Bool = false // Real-time beat detection
     
     private let seekInterval: TimeInterval = 10.0 // 10 seconds for rewind/fast forward
     
@@ -36,6 +38,22 @@ class MusicPlayer: NSObject, ObservableObject {
     private var startTime: Date?
     private var pausedTime: TimeInterval = 0
     private var isSeeking: Bool = false // Flag to prevent autoplay during seek
+    
+    // Beat detection
+    private var energyHistory: [Float] = []
+    private var beatTimes: [TimeInterval] = []
+    private var lastBeatTime: TimeInterval = 0
+    private let maxHistorySize = 1000 // Keep last 1000 energy values
+    private let minBeatInterval: TimeInterval = 0.2 // Minimum time between beats (300 BPM max)
+    private let maxBeatInterval: TimeInterval = 2.0 // Maximum time between beats (30 BPM min)
+    
+    // Real-time beat detection
+    private var recentEnergyValues: [Float] = []
+    private var lastBeatDetectionTime: TimeInterval = 0
+    private var averageEnergy: Float = 0.0
+    private var smoothedEnergy: Float = 0.0 // Smoothed energy for beat detection
+    private let energyHistorySize = 43 // Keep last 43 values (~1 second at 44.1kHz with 1024 buffer)
+    private let smoothingFactor: Float = 0.85 // Similar to VU meters but slightly more responsive
     
     var playlist: Playlist
     
@@ -105,6 +123,9 @@ class MusicPlayer: NSObject, ObservableObject {
         // Stop current playback
         stop()
         
+        // Reset beat detection
+        resetBeatDetection()
+        
         // Release previous access if it exists
         if let previousURL = currentAccessingURL {
             previousURL.stopAccessingSecurityScopedResource()
@@ -139,10 +160,25 @@ class MusicPlayer: NSObject, ObservableObject {
             currentTime = 0
             pausedTime = 0
             
+            // Start analyzing for BPM in background
+            analyzeBPM(for: file)
+            
         } catch {
             print("Failed to load audio file: \(error)")
             audioFile = nil
         }
+    }
+    
+    private func resetBeatDetection() {
+        energyHistory.removeAll()
+        beatTimes.removeAll()
+        lastBeatTime = 0
+        detectedBPM = nil
+        recentEnergyValues.removeAll()
+        lastBeatDetectionTime = 0
+        averageEnergy = 0.0
+        smoothedEnergy = 0.0
+        beatDetected = false
     }
     
     func play() {
@@ -410,6 +446,115 @@ class MusicPlayer: NSObject, ObservableObject {
         pausedTime = newTime
     }
     
+    // MARK: - Beat Detection
+    
+    private func analyzeBPM(for file: AVAudioFile) {
+        // Analyze audio file in background to detect BPM
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            
+            let format = file.processingFormat
+            let frameCount = file.length
+            let bufferSize: AVAudioFrameCount = 4096
+            
+            var energyValues: [Float] = []
+            var sampleRate = format.sampleRate
+            
+            // Read file in chunks
+            file.framePosition = 0
+            while file.framePosition < frameCount {
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: bufferSize) else {
+                    break
+                }
+                
+                do {
+                    try file.read(into: buffer)
+                    let energy = self.calculateEnergy(from: buffer)
+                    energyValues.append(energy)
+                } catch {
+                    break
+                }
+            }
+            
+            // Detect beats from energy values
+            let bpm = self.detectBPMFromEnergy(energyValues, sampleRate: sampleRate, bufferSize: Int(bufferSize))
+            
+            DispatchQueue.main.async {
+                self.detectedBPM = bpm
+            }
+        }
+    }
+    
+    private func calculateEnergy(from buffer: AVAudioPCMBuffer) -> Float {
+        guard let channelData = buffer.floatChannelData else { return 0 }
+        
+        let channelCount = Int(buffer.format.channelCount)
+        let frameLength = Int(buffer.frameLength)
+        guard frameLength > 0, channelCount > 0 else { return 0 }
+        
+        var sum: Float = 0.0
+        let leftChannel = channelData[0]
+        let rightChannel = channelCount > 1 ? channelData[1] : channelData[0]
+        
+        // Calculate energy from both channels
+        for frame in 0..<frameLength {
+            let leftSample = leftChannel[frame]
+            let rightSample = rightChannel[frame]
+            let mono = (leftSample + rightSample) / 2.0
+            sum += mono * mono
+        }
+        
+        return sqrt(sum / Float(frameLength))
+    }
+    
+    private func detectBPMFromEnergy(_ energyValues: [Float], sampleRate: Double, bufferSize: Int) -> Double? {
+        guard energyValues.count > 10 else { return nil }
+        
+        // Calculate local energy average
+        let windowSize = 5
+        var smoothedEnergy: [Float] = []
+        
+        for i in 0..<energyValues.count {
+            let start = max(0, i - windowSize)
+            let end = min(energyValues.count, i + windowSize + 1)
+            let window = energyValues[start..<end]
+            let average = window.reduce(0, +) / Float(window.count)
+            smoothedEnergy.append(average)
+        }
+        
+        // Detect peaks (beats)
+        var beatIntervals: [Double] = []
+        var lastPeakIndex = 0
+        let maxEnergy = smoothedEnergy.max() ?? 0
+        let threshold = maxEnergy * 0.3 // 30% of max energy
+        
+        for i in 1..<(smoothedEnergy.count - 1) {
+            if smoothedEnergy[i] > smoothedEnergy[i-1] &&
+               smoothedEnergy[i] > smoothedEnergy[i+1] &&
+               smoothedEnergy[i] > threshold {
+                
+                if lastPeakIndex > 0 {
+                    let interval = Double(i - lastPeakIndex) * Double(bufferSize) / sampleRate
+                    if interval >= minBeatInterval && interval <= maxBeatInterval {
+                        beatIntervals.append(interval)
+                    }
+                }
+                lastPeakIndex = i
+            }
+        }
+        
+        guard beatIntervals.count >= 3 else { return nil }
+        
+        // Calculate average BPM
+        let averageInterval = beatIntervals.reduce(0, +) / Double(beatIntervals.count)
+        let bpm = 60.0 / averageInterval
+        
+        // Validate BPM range (30-300 BPM)
+        guard bpm >= 30 && bpm <= 300 else { return nil }
+        
+        return bpm
+    }
+    
     // MARK: - Audio Level Monitoring
     
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
@@ -463,6 +608,16 @@ class MusicPlayer: NSObject, ObservableObject {
         let leftLevel = (leftRMS * 0.7 + leftPeak * 0.3)
         let rightLevel = (rightRMS * 0.7 + rightPeak * 0.3)
         
+        // Calculate energy for beat detection (mono) - use raw RMS/peak combination
+        // This is before normalization, so we get the actual energy level
+        let rawMonoEnergy = (leftLevel + rightLevel) / 2.0
+        
+        // Apply smoothing to energy (similar to VU meters) to avoid false positives
+        smoothedEnergy = smoothedEnergy * smoothingFactor + rawMonoEnergy * (1 - smoothingFactor)
+        
+        // Real-time beat detection using smoothed energy
+        detectBeat(energy: smoothedEnergy)
+        
         // Apply smoothing and normalize to 0-1 range
         DispatchQueue.main.async { [weak self] in
             guard let self = self, self.isPlaying else { return }
@@ -481,6 +636,74 @@ class MusicPlayer: NSObject, ObservableObject {
             
             self.leftLevel = max(normalizedLeft, 0)
             self.rightLevel = max(normalizedRight, 0)
+        }
+    }
+    
+    private func detectBeat(energy: Float) {
+        let currentTime = Date().timeIntervalSince1970
+        
+        // Add smoothed energy to history
+        recentEnergyValues.append(energy)
+        if recentEnergyValues.count > energyHistorySize {
+            recentEnergyValues.removeFirst()
+        }
+        
+        // Need enough history to detect beats
+        guard recentEnergyValues.count >= 15 else { return }
+        
+        // Calculate average energy (using a longer window for stability)
+        averageEnergy = recentEnergyValues.reduce(0, +) / Float(recentEnergyValues.count)
+        
+        // Only detect beats if we have meaningful audio (similar to VU meters threshold)
+        guard averageEnergy > 0.005 else { return } // Minimum energy threshold
+        
+        // Calculate variance to determine dynamic threshold
+        let variance = recentEnergyValues.map { pow($0 - averageEnergy, 2) }.reduce(0, +) / Float(recentEnergyValues.count)
+        let stdDev = sqrt(variance)
+        
+        // Use a more conservative threshold to avoid saturation
+        // Higher multiplier means less sensitive (similar to VU meters normalization)
+        let dynamicThreshold = averageEnergy + stdDev * 1.5
+        
+        // Minimum threshold based on average energy (percentage-based, like VU meters)
+        let minThreshold = averageEnergy * 1.15 // At least 15% above average
+        let threshold = max(dynamicThreshold, minThreshold)
+        
+        // Detect beat if energy exceeds threshold and enough time has passed
+        let timeSinceLastBeat = currentTime - lastBeatDetectionTime
+        
+        // Use detected BPM if available, otherwise use adaptive interval
+        let minInterval: TimeInterval
+        if let bpm = detectedBPM, bpm > 0 {
+            // Allow beats at up to 2x the detected BPM (for syncopation)
+            minInterval = (60.0 / bpm) * 0.5
+        } else {
+            // If no BPM detected yet, use a more conservative interval
+            minInterval = 0.2 // Allow beats every 200ms minimum (300 BPM max)
+        }
+        
+        // Check if energy spike is significant enough (more conservative)
+        let energyIncrease = energy - averageEnergy
+        let relativeIncrease = averageEnergy > 0 ? energyIncrease / averageEnergy : 0
+        
+        // More conservative detection: requires higher relative increase to avoid saturation
+        // This matches the normalization approach used in VU meters
+        let minRelativeIncrease: Float = 0.15 // At least 15% increase (was 10%)
+        
+        // Detect beat: energy exceeds threshold, enough time passed, and significant increase
+        if energy > threshold && timeSinceLastBeat >= minInterval && relativeIncrease > minRelativeIncrease {
+            lastBeatDetectionTime = currentTime
+            
+            // Trigger beat indicator
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.beatDetected = true
+                
+                // Turn off after a short duration
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                    self?.beatDetected = false
+                }
+            }
         }
     }
 }
