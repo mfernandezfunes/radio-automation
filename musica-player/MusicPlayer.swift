@@ -338,14 +338,23 @@ class MusicPlayer: NSObject, ObservableObject {
         }
         
         // For equalizer, we can't bypass easily, so we set gains to 0 when disabled
+        // Also need to enable/disable bands (bypass property)
         if let eq = equalizerUnit {
             if equalizerEnabled {
+                // Enable all bands and set gains
+                eq.bands[0].bypass = false
                 eq.bands[0].gain = equalizerLowGain
+                eq.bands[1].bypass = false
                 eq.bands[1].gain = equalizerMidGain
+                eq.bands[2].bypass = false
                 eq.bands[2].gain = equalizerHighGain
             } else {
+                // Bypass all bands
+                eq.bands[0].bypass = true
                 eq.bands[0].gain = 0.0
+                eq.bands[1].bypass = true
                 eq.bands[1].gain = 0.0
+                eq.bands[2].bypass = true
                 eq.bands[2].gain = 0.0
             }
         }
@@ -486,6 +495,7 @@ class MusicPlayer: NSObject, ObservableObject {
         lowBand.gain = equalizerLowGain
         lowBand.bandwidth = 1.0
         lowBand.filterType = .lowShelf
+        lowBand.bypass = !equalizerEnabled // Enable band if equalizer is enabled
         
         // Mid frequency
         let midBand = eq.bands[1]
@@ -493,6 +503,7 @@ class MusicPlayer: NSObject, ObservableObject {
         midBand.gain = equalizerMidGain
         midBand.bandwidth = 1.0
         midBand.filterType = .parametric
+        midBand.bypass = !equalizerEnabled // Enable band if equalizer is enabled
         
         // High frequency (treble)
         let highBand = eq.bands[2]
@@ -500,6 +511,7 @@ class MusicPlayer: NSObject, ObservableObject {
         highBand.gain = equalizerHighGain
         highBand.bandwidth = 1.0
         highBand.filterType = .highShelf
+        highBand.bypass = !equalizerEnabled // Enable band if equalizer is enabled
     }
     
     private func detectOutputDevices() {
@@ -559,15 +571,23 @@ class MusicPlayer: NSObject, ObservableObject {
         $equalizerEnabled
             .sink { [weak self] enabled in
                 guard let self = self else { return }
-                // Immediately update equalizer gains when toggled
+                // Immediately update equalizer gains and bypass state when toggled
                 if let eq = self.equalizerUnit {
                     if enabled {
+                        // Enable bands and set gains
+                        eq.bands[0].bypass = false
                         eq.bands[0].gain = self.equalizerLowGain
+                        eq.bands[1].bypass = false
                         eq.bands[1].gain = self.equalizerMidGain
+                        eq.bands[2].bypass = false
                         eq.bands[2].gain = self.equalizerHighGain
                     } else {
+                        // Bypass all bands
+                        eq.bands[0].bypass = true
                         eq.bands[0].gain = 0.0
+                        eq.bands[1].bypass = true
                         eq.bands[1].gain = 0.0
+                        eq.bands[2].bypass = true
                         eq.bands[2].gain = 0.0
                     }
                 }
@@ -611,8 +631,9 @@ class MusicPlayer: NSObject, ObservableObject {
         $equalizerLowGain
             .sink { [weak self] value in
                 guard let self = self else { return }
-                if self.equalizerEnabled {
-                    self.equalizerUnit?.bands[0].gain = value
+                if let eq = self.equalizerUnit, self.equalizerEnabled {
+                    eq.bands[0].bypass = false
+                    eq.bands[0].gain = value
                 }
             }
             .store(in: &cancellables)
@@ -620,8 +641,9 @@ class MusicPlayer: NSObject, ObservableObject {
         $equalizerMidGain
             .sink { [weak self] value in
                 guard let self = self else { return }
-                if self.equalizerEnabled {
-                    self.equalizerUnit?.bands[1].gain = value
+                if let eq = self.equalizerUnit, self.equalizerEnabled {
+                    eq.bands[1].bypass = false
+                    eq.bands[1].gain = value
                 }
             }
             .store(in: &cancellables)
@@ -629,8 +651,9 @@ class MusicPlayer: NSObject, ObservableObject {
         $equalizerHighGain
             .sink { [weak self] value in
                 guard let self = self else { return }
-                if self.equalizerEnabled {
-                    self.equalizerUnit?.bands[2].gain = value
+                if let eq = self.equalizerUnit, self.equalizerEnabled {
+                    eq.bands[2].bypass = false
+                    eq.bands[2].gain = value
                 }
             }
             .store(in: &cancellables)
