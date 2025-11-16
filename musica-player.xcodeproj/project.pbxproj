@@ -29,6 +29,25 @@
 		B93544002EC97DFB00A505FC /* musica-playerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "musica-playerUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B998E89E2EC981FB002A5BD7 /* Exceptions for "musica-playerTests" folder in "musica-playerTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"musica-playerUITests/musica_playerUITests.swift",
+				"musica-playerUITests/musica_playerUITestsLaunchTests.swift",
+			);
+			target = B93543F52EC97DFB00A505FC /* musica-playerTests */;
+		};
+		B998E89F2EC981FB002A5BD7 /* Exceptions for "musica-playerTests" folder in "musica-playerUITests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"musica-playerUITests/musica_playerUITests.swift",
+				"musica-playerUITests/musica_playerUITestsLaunchTests.swift",
+			);
+			target = B93543FF2EC97DFB00A505FC /* musica-playerUITests */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		B93543EB2EC97DFA00A505FC /* musica-player */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
@@ -37,12 +56,11 @@
 		};
 		B93543F92EC97DFB00A505FC /* musica-playerTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B998E89E2EC981FB002A5BD7 /* Exceptions for "musica-playerTests" folder in "musica-playerTests" target */,
+				B998E89F2EC981FB002A5BD7 /* Exceptions for "musica-playerTests" folder in "musica-playerUITests" target */,
+			);
 			path = "musica-playerTests";
-			sourceTree = "<group>";
-		};
-		B93544032EC97DFB00A505FC /* musica-playerUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "musica-playerUITests";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -77,7 +95,6 @@
 			children = (
 				B93543EB2EC97DFA00A505FC /* musica-player */,
 				B93543F92EC97DFB00A505FC /* musica-playerTests */,
-				B93544032EC97DFB00A505FC /* musica-playerUITests */,
 				B93543EA2EC97DFA00A505FC /* Products */,
 			);
 			sourceTree = "<group>";
@@ -152,9 +169,6 @@
 			);
 			dependencies = (
 				B93544022EC97DFB00A505FC /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				B93544032EC97DFB00A505FC /* musica-playerUITests */,
 			);
 			name = "musica-playerUITests";
 			packageProductDependencies = (
