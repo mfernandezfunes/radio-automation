@@ -1,6 +1,6 @@
 # Plan de Mejoras - Software de Automatización de Radio
 
-Este documento detalla las mejoras propuestas para convertir Musica Player en un software completo de automatización de radio profesional.
+Este documento detalla las mejoras propuestas para convertir DineMac en un software completo de automatización de radio profesional.
 
 ## 🎙️ Funcionalidades de Radio Profesional
 

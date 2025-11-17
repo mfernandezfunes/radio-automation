@@ -26,6 +26,9 @@ struct musica_playerApp: App {
         pl1.otherPlayer = pl2
         pl2.otherPlayer = pl1
         
+        // Set players in GlobalAudioMixer for master volume control
+        GlobalAudioMixer.shared.setPlayers(player1: pl1, player2: pl2)
+        
         _playlist1 = StateObject(wrappedValue: p1)
         _player1 = StateObject(wrappedValue: pl1)
         _playlist2 = StateObject(wrappedValue: p2)
@@ -53,5 +56,11 @@ struct musica_playerApp: App {
             ConfigView(player1: player1, player2: player2)
         }
         .defaultSize(width: 900, height: 700)
+        
+        // Audio Output window - single instance
+        Window("Salida de Audio", id: "audioOutput") {
+            AudioOutputView(player1: player1, player2: player2)
+        }
+        .defaultSize(width: 500, height: 600)
     }
 }

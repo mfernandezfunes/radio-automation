@@ -82,6 +82,16 @@ struct StatusBarView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Abrir configuración")
+                    
+                    Button(action: {
+                        openWindow(id: "audioOutput")
+                    }) {
+                        Image(systemName: "speaker.wave.3")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Salida de Audio - Equalizador global")
                 }
             }
             

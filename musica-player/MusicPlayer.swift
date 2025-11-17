@@ -57,6 +57,12 @@ class MusicPlayer: NSObject, ObservableObject {
     @Published var equalizerMidGain: Float = 0.0 // dB
     @Published var equalizerHighGain: Float = 0.0 // dB
     
+    // Output equalizer (applied to mainMixerNode - global output)
+    @Published var outputEqualizerEnabled: Bool = false
+    @Published var outputEqualizerLowGain: Float = 0.0 // dB
+    @Published var outputEqualizerMidGain: Float = 0.0 // dB
+    @Published var outputEqualizerHighGain: Float = 0.0 // dB
+    
     // AirPlay - Note: On macOS, AirPlay is managed by system preferences
     // The audioEngine automatically uses the system-selected output device
     @Published var airPlayInfo: String = "Usar Preferencias del Sistema"
@@ -109,7 +115,13 @@ class MusicPlayer: NSObject, ObservableObject {
     private let seekInterval: TimeInterval = 10.0 // 10 seconds for rewind/fast forward
     
     // AVAudioEngine components
-    private let audioEngine = AVAudioEngine()
+    // Use global engine if available, otherwise create local engine
+    private var audioEngine: AVAudioEngine {
+        // Check if we should use global engine (when both players are initialized)
+        // For now, we'll use local engine but prepare for global connection
+        return _audioEngine
+    }
+    private let _audioEngine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private var audioFile: AVAudioFile?
     private var nextAudioFile: AVAudioFile? // Preloaded next song
@@ -125,6 +137,8 @@ class MusicPlayer: NSObject, ObservableObject {
     private var equalizerUnit: AVAudioUnitEQ?
     private var varispeedUnit: AVAudioUnitVarispeed? // For playback rate control
     private var mixerNode: AVAudioMixerNode? // For stereo balance
+    private var outputEqualizerUnit: AVAudioUnitEQ? // Global output equalizer on mainMixerNode
+    private var globalMixerConnectionNode: AVAudioMixerNode? // Connection point for global mixer
     
     // Audio routing
     private var effectChain: [AVAudioNode] = []
@@ -263,13 +277,22 @@ class MusicPlayer: NSObject, ObservableObject {
         // Build effect chain once - effects will always be connected
         buildEffectChainOnce()
         
-        // Install tap on mixer for level monitoring
-        let mixer = audioEngine.mainMixerNode
-        let format = mixer.outputFormat(forBus: 0)
-        mixer.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] (buffer: AVAudioPCMBuffer, time: AVAudioTime) in
-            self?.processAudioBuffer(buffer)
+        // Install tap on mixerNode (before mainMixerNode) for level monitoring
+        // This way the VU meters are not affected by master volume changes
+        let format = mixerNode?.outputFormat(forBus: 0) ?? audioEngine.mainMixerNode.outputFormat(forBus: 0)
+        if let mixer = mixerNode {
+            mixer.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] (buffer: AVAudioPCMBuffer, time: AVAudioTime) in
+                self?.processAudioBuffer(buffer)
+            }
+            tapInstalled = true
+        } else {
+            // Fallback to mainMixerNode if mixerNode is not available
+            let mixer = audioEngine.mainMixerNode
+            mixer.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] (buffer: AVAudioPCMBuffer, time: AVAudioTime) in
+                self?.processAudioBuffer(buffer)
+            }
+            tapInstalled = true
         }
-        tapInstalled = true
         
         // Start audio engine
         do {
@@ -308,21 +331,37 @@ class MusicPlayer: NSObject, ObservableObject {
         audioEngine.attach(eq)
         equalizerUnit = eq
         
-        // Connect: player -> varispeed -> delay -> reverb -> eq -> mixer -> mainMixer
+        // Create output equalizer for mainMixerNode (global output EQ)
+        let outputEQ = AVAudioUnitEQ(numberOfBands: 3)
+        audioEngine.attach(outputEQ)
+        outputEqualizerUnit = outputEQ
+        configureOutputEqualizer(outputEQ)
+        
+        // Connect: player -> varispeed -> delay -> reverb -> eq -> mixer -> outputEQ -> mainMixer
         // Always connected, effects controlled via wet/dry mix
         audioEngine.connect(playerNode, to: varispeed, format: nil)
         audioEngine.connect(varispeed, to: delay, format: nil)
         audioEngine.connect(delay, to: reverb, format: nil)
         audioEngine.connect(reverb, to: eq, format: nil)
         audioEngine.connect(eq, to: mixer, format: nil)
-        audioEngine.connect(mixer, to: audioEngine.mainMixerNode, format: nil)
+        audioEngine.connect(mixer, to: outputEQ, format: nil)
+        audioEngine.connect(outputEQ, to: audioEngine.mainMixerNode, format: nil)
+        
+        // Also connect to global mixer if available
+        // The global mixer will receive audio via tap from mainMixerNode
+        setupGlobalMixerConnection()
         
         // Initialize effect parameters
         configureDelay(delay)
         configureReverb(reverb)
         configureEqualizer(eq)
+        configureOutputEqualizer(outputEQ)
         updatePlaybackRate()
         updateStereoBalance()
+        
+        // Set initial master volume to 1.0 (will be updated by GlobalAudioMixer when players are registered)
+        mixerNode?.volume = 1.0
+        audioEngine.mainMixerNode.volume = 1.0
         
         // Set initial wet/dry mix based on enabled state
         updateEffectStates()
@@ -516,6 +555,32 @@ class MusicPlayer: NSObject, ObservableObject {
         highBand.bypass = !equalizerEnabled // Enable band if equalizer is enabled
     }
     
+    private func configureOutputEqualizer(_ eq: AVAudioUnitEQ) {
+        // Low frequency (bass)
+        let lowBand = eq.bands[0]
+        lowBand.frequency = 80
+        lowBand.gain = outputEqualizerLowGain
+        lowBand.bandwidth = 1.0
+        lowBand.filterType = .lowShelf
+        lowBand.bypass = !outputEqualizerEnabled
+        
+        // Mid frequency
+        let midBand = eq.bands[1]
+        midBand.frequency = 1000
+        midBand.gain = outputEqualizerMidGain
+        midBand.bandwidth = 1.0
+        midBand.filterType = .parametric
+        midBand.bypass = !outputEqualizerEnabled
+        
+        // High frequency (treble)
+        let highBand = eq.bands[2]
+        highBand.frequency = 8000
+        highBand.gain = outputEqualizerHighGain
+        highBand.bandwidth = 1.0
+        highBand.filterType = .highShelf
+        highBand.bypass = !outputEqualizerEnabled
+    }
+    
     private func detectOutputDevices() {
         // Note: AVAudioSession is iOS-specific
         // On macOS, we use AVAudioEngine's outputNode which respects system audio preferences
@@ -659,10 +724,97 @@ class MusicPlayer: NSObject, ObservableObject {
                 }
             }
             .store(in: &cancellables)
+        
+        // Observe output equalizer changes
+        $outputEqualizerEnabled
+            .sink { [weak self] enabled in
+                guard let self = self else { return }
+                if let eq = self.outputEqualizerUnit {
+                    eq.bands[0].bypass = !enabled
+                    eq.bands[1].bypass = !enabled
+                    eq.bands[2].bypass = !enabled
+                    if enabled {
+                        eq.bands[0].gain = self.outputEqualizerLowGain
+                        eq.bands[1].gain = self.outputEqualizerMidGain
+                        eq.bands[2].gain = self.outputEqualizerHighGain
+                    } else {
+                        eq.bands[0].gain = 0.0
+                        eq.bands[1].gain = 0.0
+                        eq.bands[2].gain = 0.0
+                    }
+                }
+            }
+            .store(in: &cancellables)
+        
+        $outputEqualizerLowGain
+            .sink { [weak self] value in
+                guard let self = self else { return }
+                if let eq = self.outputEqualizerUnit, self.outputEqualizerEnabled {
+                    eq.bands[0].bypass = false
+                    eq.bands[0].gain = value
+                }
+            }
+            .store(in: &cancellables)
+        
+        $outputEqualizerMidGain
+            .sink { [weak self] value in
+                guard let self = self else { return }
+                if let eq = self.outputEqualizerUnit, self.outputEqualizerEnabled {
+                    eq.bands[1].bypass = false
+                    eq.bands[1].gain = value
+                }
+            }
+            .store(in: &cancellables)
+        
+        $outputEqualizerHighGain
+            .sink { [weak self] value in
+                guard let self = self else { return }
+                if let eq = self.outputEqualizerUnit, self.outputEqualizerEnabled {
+                    eq.bands[2].bypass = false
+                    eq.bands[2].gain = value
+                }
+            }
+            .store(in: &cancellables)
+    }
+    
+    private func setupGlobalMixerConnection() {
+        // Connect this player's final output (after outputEQ) to the global mixer
+        // Since we can't connect nodes from different engines directly,
+        // we'll connect the outputEQ to both the local mainMixerNode (for VU meters)
+        // and create a connection point that can be tapped by the global mixer
+        
+        // The global mixer will receive audio via a tap on the outputEQ or mixer
+        // For now, we keep the local connection and the global mixer can tap from it
+        // This is a limitation - ideally both players would use the same engine
+    }
+    
+    /// Get the final output node (after all effects) for connection to global mixer
+    /// This returns the outputEQ node which is the last node before mainMixerNode
+    func getFinalOutputNode() -> AVAudioNode? {
+        return outputEqualizerUnit
+    }
+    
+    /// Set the master volume by controlling the mainMixerNode volume
+    /// This affects the final output volume of this player
+    /// Note: We only control mainMixerNode volume, NOT mixerNode volume
+    /// because mixerNode is used for VU meter monitoring (before master volume)
+    func setMasterVolume(_ volume: Float) {
+        // Only control mainMixerNode volume (after the tap for VU meters)
+        // This way VU meters are not affected by master volume changes
+        audioEngine.mainMixerNode.volume = volume
+    }
+    
+    /// Set the stereo balance (for global control)
+    /// This sets the balance for this player
+    func setStereoBalance(_ balance: Float) {
+        stereoBalance = balance
+        updateStereoBalance()
     }
     
     private func stopAudioEngine() {
         if tapInstalled {
+            // Remove tap from mixerNode or mainMixerNode
+            mixerNode?.removeTap(onBus: 0)
             audioEngine.mainMixerNode.removeTap(onBus: 0)
             tapInstalled = false
         }

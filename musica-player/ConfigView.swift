@@ -11,9 +11,6 @@ import AVFoundation
 struct ConfigView: View {
     @ObservedObject var player1: MusicPlayer
     @ObservedObject var player2: MusicPlayer
-    @State private var masterVolume: Float = 1.0
-    @State private var player1BaseVolume: Float = 0.5
-    @State private var player2BaseVolume: Float = 0.5
     
     var body: some View {
         ScrollView {
@@ -27,10 +24,10 @@ struct ConfigView: View {
                 // Players side by side
                 HStack(alignment: .top, spacing: 20) {
                     // Player 1 Section
-                    playerSection(player: player1, baseVolume: $player1BaseVolume, title: "Player 1")
+                    playerSection(player: player1, baseVolume: Binding(get: { player1.volume }, set: { _ in }), title: "Player 1")
                     
                     // Player 2 Section
-                    playerSection(player: player2, baseVolume: $player2BaseVolume, title: "Player 2")
+                    playerSection(player: player2, baseVolume: Binding(get: { player2.volume }, set: { _ in }), title: "Player 2")
                 }
                 
                 Divider()
@@ -55,98 +52,16 @@ struct ConfigView: View {
                     playbackControlsSection(player: player2, title: "Controles de Reproducción - Player 2")
                 }
                 
-                Divider()
-                
-                // Master Volume and AirPlay side by side (at the bottom)
-                HStack(alignment: .top, spacing: 20) {
-                    // Master Volume Section
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Volumen Master")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        
-                        HStack(spacing: 12) {
-                            Image(systemName: "speaker.fill")
-                                .font(.title3)
-                                .foregroundColor(.secondary)
-                                .frame(width: 24)
-                            
-                            Slider(value: $masterVolume, in: 0...1) {
-                                Text("Master Volume")
-                            } onEditingChanged: { editing in
-                                applyMasterVolume()
-                            }
-                            .onChange(of: masterVolume) { newValue in
-                                applyMasterVolume()
-                            }
-                            
-                            Image(systemName: "speaker.wave.3.fill")
-                                .font(.title3)
-                                .foregroundColor(.secondary)
-                                .frame(width: 24)
-                            
-                            Text("\(Int(masterVolume * 100))%")
-                                .font(.headline)
-                                .foregroundColor(.primary)
-                                .frame(width: 50, alignment: .trailing)
-                        }
-                    }
-                    .padding()
-                    .background(Color(NSColor.controlBackgroundColor))
-                    .cornerRadius(8)
-                    .frame(maxWidth: .infinity)
-                    
-                    // AirPlay Section
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("AirPlay")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        
-                        HStack {
-                            Image(systemName: "airplayaudio")
-                                .font(.title3)
-                                .foregroundColor(.secondary)
-                            
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Salida de Audio")
-                                    .font(.subheadline)
-                                Text("Selecciona AirPlay desde Preferencias del Sistema → Sonido")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            Spacer()
-                        }
-                    }
-                    .padding()
-                    .background(Color(NSColor.controlBackgroundColor))
-                    .cornerRadius(8)
-                    .frame(maxWidth: .infinity)
-                }
             }
             .padding()
         }
         .frame(width: 900)
         .frame(minHeight: 600)
-        .onAppear {
-            masterVolume = 1.0
-            player1BaseVolume = player1.volume
-            player2BaseVolume = player2.volume
-        }
-        .onChange(of: player1.volume) { _ in
-            if masterVolume > 0.01 {
-                player1BaseVolume = player1.volume / masterVolume
-            }
-        }
-        .onChange(of: player2.volume) { _ in
-            if masterVolume > 0.01 {
-                player2BaseVolume = player2.volume / masterVolume
-            }
-        }
     }
     
     @ViewBuilder
     private func playerSection(player: MusicPlayer, baseVolume: Binding<Float>, title: String) -> some View {
+        // Note: baseVolume parameter kept for compatibility but not used anymore
         VStack(alignment: .leading, spacing: 16) {
             Text(title)
                 .font(.headline)
@@ -201,14 +116,7 @@ struct ConfigView: View {
                 
                 Slider(value: Binding(
                     get: { player.volume },
-                    set: { newValue in
-                        if masterVolume > 0.01 {
-                            baseVolume.wrappedValue = newValue / masterVolume
-                        } else {
-                            baseVolume.wrappedValue = newValue
-                        }
-                        applyMasterVolume()
-                    }
+                    set: { player.volume = $0 }
                 ), in: 0...1)
                 
                 Image(systemName: "speaker.wave.3.fill")
@@ -976,69 +884,6 @@ struct ConfigView: View {
             .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
             .cornerRadius(6)
             
-            // Stereo Balance
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: "speaker.wave.2")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text("Balance Estéreo")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                    Spacer()
-                    Text(player.stereoBalance == 0 ? "Centro" : player.stereoBalance > 0 ? "Derecha \(String(format: "%.0f%%", abs(player.stereoBalance) * 100))" : "Izquierda \(String(format: "%.0f%%", abs(player.stereoBalance) * 100))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
-                        .cornerRadius(4)
-                }
-                
-                HStack(spacing: 12) {
-                    Image(systemName: "speaker.wave.1")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .frame(width: 20)
-                    
-                    Slider(value: Binding(
-                        get: { player.stereoBalance },
-                        set: { player.stereoBalance = $0 }
-                    ), in: -1.0...1.0)
-                    
-                    Image(systemName: "speaker.wave.1")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .frame(width: 20)
-                }
-                
-                // Quick balance buttons
-                HStack(spacing: 8) {
-                    Button("Izq") {
-                        player.stereoBalance = -1.0
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    
-                    Button("Centro") {
-                        player.stereoBalance = 0.0
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    
-                    Button("Der") {
-                        player.stereoBalance = 1.0
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    
-                    Spacer()
-                }
-            }
-            .padding()
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
-            .cornerRadius(6)
-            
             // Crossfade
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -1213,10 +1058,6 @@ struct ConfigView: View {
         .frame(maxWidth: .infinity)
     }
     
-    private func applyMasterVolume() {
-        player1.volume = player1BaseVolume * masterVolume
-        player2.volume = player2BaseVolume * masterVolume
-    }
 }
 
 #Preview {

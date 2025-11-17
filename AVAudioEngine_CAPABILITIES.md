@@ -1,6 +1,6 @@
 # AVAudioEngine - Capacidades y Posibilidades Técnicas
 
-Este documento detalla todas las capacidades de AVAudioEngine y cómo pueden ser utilizadas en Musica Player para expandir funcionalidades de audio profesional.
+Este documento detalla todas las capacidades de AVAudioEngine y cómo pueden ser utilizadas en DineMac para expandir funcionalidades de audio profesional.
 
 ## 📚 Tabla de Contenidos
 
@@ -14,7 +14,7 @@ Este documento detalla todas las capacidades de AVAudioEngine y cómo pueden ser
 8. [Routing y Conectividad](#routing-y-conectividad)
 9. [Sincronización y Timing](#sincronización)
 10. [Casos de Uso Avanzados](#casos-de-uso)
-11. [Implementación en Musica Player](#implementación-actual)
+11. [Implementación en DineMac](#implementación-actual)
 
 ---
 
@@ -97,7 +97,7 @@ playerNode.seek(to: AVAudioTime)
 - ✅ Control de velocidad (con AVAudioUnitVarispeed)
 - ✅ Control de pitch (con AVAudioUnitTimePitch)
 
-**Uso en Musica Player:**
+**Uso en DineMac:**
 - ✅ Implementado para reproducción básica
 - ⚠️ Podría expandirse con scheduling avanzado
 - ⚠️ Podría agregar loops y segmentos
@@ -125,7 +125,7 @@ mixerNode.pan = -0.5  // Balance estéreo
 - ✅ Balance estéreo (pan)
 - ✅ Tap para análisis (usado en Musica Player para VU meters)
 
-**Uso en Musica Player:**
+**Uso en DineMac:**
 - ✅ Implementado para mezcla principal
 - ✅ Usado para VU meters (tap en mainMixerNode)
 - ⚠️ Podría usarse para mezclar múltiples players
@@ -211,7 +211,7 @@ band.filterType = .parametric
 - ✅ Control de frecuencia, ganancia, y ancho de banda
 - ✅ Bypass individual por banda
 
-**Uso en Musica Player:**
+**Uso en DineMac:**
 - ⚠️ Actualmente solo 3 bandas (low, mid, high)
 - ⚠️ Podría expandirse a ecualizador paramétrico completo
 
@@ -244,7 +244,7 @@ reverbUnit.wetDryMix = 50.0  // 0-100%
 - ✅ Control de wet/dry mix
 - ✅ Bypass
 
-**Uso en Musica Player:**
+**Uso en DineMac:**
 - ✅ Implementado con presets y wet/dry mix
 
 #### 3. AVAudioUnitDelay (Delay/Echo)
@@ -267,7 +267,7 @@ delayUnit.wetDryMix = 20.0       // 0-100%
 - ✅ Low-pass filter en feedback
 - ✅ Wet/dry mix
 
-**Uso en Musica Player:**
+**Uso en DineMac:**
 - ✅ Implementado con todos los controles
 
 #### 4. AVAudioUnitDistortion (Distorsión)
@@ -331,7 +331,7 @@ timePitchUnit.overlap = 8.0     // Overlap para mejor calidad
 - ✅ Control de overlap para calidad
 - ✅ Muy útil para sincronización de BPM
 
-**Uso en Musica Player:**
+**Uso en DineMac:**
 - ⚠️ Actualmente usa AVAudioUnitVarispeed (solo velocidad)
 - ⚠️ Podría cambiarse a TimePitch para mejor control
 - ⚠️ Ideal para auto-mix con ajuste de BPM
@@ -351,7 +351,7 @@ varispeedUnit.rate = 1.0  // 0.25-4.0 (velocidad)
 - ✅ Control de velocidad
 - ⚠️ Cambia pitch al cambiar velocidad
 
-**Uso en Musica Player:**
+**Uso en DineMac:**
 - ✅ Implementado para playback rate
 
 #### 7. AVAudioUnitEffect (Compresor y otros)
@@ -384,7 +384,7 @@ if let dynamicsProcessor = compressorUnit.auAudioUnit.effectNodes.first {
 - ✅ Release Time
 - ✅ Master Gain
 
-**Uso en Musica Player:**
+**Uso en DineMac:**
 - ✅ Implementado con Dynamics Processor
 
 #### 8. AVAudioUnitGenerator
@@ -438,7 +438,7 @@ mixerNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, time 
 - ✅ Análisis espectral (FFT)
 - ✅ Procesamiento personalizado
 
-**Uso en Musica Player:**
+**Uso en DineMac:**
 - ✅ VU meters
 - ✅ Detección de beats
 - ⚠️ Podría expandirse para análisis espectral
@@ -764,7 +764,7 @@ playerNode.scheduleSegment(audioFile,
 
 ---
 
-## Implementación Actual en Musica Player
+## Implementación Actual en DineMac
 
 ### ✅ Implementado
 
@@ -808,7 +808,7 @@ playerNode.scheduleSegment(audioFile,
 
 ## Conclusión
 
-AVAudioEngine ofrece capacidades extensas para procesamiento de audio profesional. Musica Player ya utiliza muchas de estas capacidades, pero hay mucho espacio para expansión, especialmente en:
+AVAudioEngine ofrece capacidades extensas para procesamiento de audio profesional. DineMac ya utiliza muchas de estas capacidades, pero hay mucho espacio para expansión, especialmente en:
 
 - Auto-mix inteligente con sincronización de BPM
 - Análisis avanzado (clave musical, espectro)
@@ -816,5 +816,5 @@ AVAudioEngine ofrece capacidades extensas para procesamiento de audio profesiona
 - Normalización y procesamiento automático
 - Routing avanzado para múltiples salidas
 
-La arquitectura actual de Musica Player está bien posicionada para agregar estas funcionalidades de manera modular.
+La arquitectura actual de DineMac está bien posicionada para agregar estas funcionalidades de manera modular.
 

@@ -1,8 +1,8 @@
-# Musica Player - Software de Automatización de Radio
+# DineMac - Software de Automatización de Radio
 
 ## Descripción General
 
-Musica Player es una aplicación macOS desarrollada en SwiftUI para la automatización de radio. Permite gestionar dos reproductores de audio independientes con funcionalidades avanzadas de reproducción, efectos de audio, detección de BPM, y comandos de automatización entre players.
+DineMac es una aplicación macOS desarrollada en SwiftUI para la automatización de radio. Permite gestionar dos reproductores de audio independientes con funcionalidades avanzadas de reproducción, efectos de audio, detección de BPM, y comandos de automatización entre players.
 
 ## Características Principales
 
