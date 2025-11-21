@@ -31,7 +31,7 @@ struct DraggablePlayerPanel: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(Color(NSColor.controlBackgroundColor))
+            .background(.thinMaterial)
             .contentShape(Rectangle())
             
             // Player status information
@@ -42,7 +42,7 @@ struct DraggablePlayerPanel: View {
             )
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+            .background(.ultraThinMaterial.opacity(0.6))
             
             Divider()
             
@@ -55,9 +55,17 @@ struct DraggablePlayerPanel: View {
             )
         }
         .frame(width: panelSize.width, height: panelSize.height)
-        .background(Color(NSColor.windowBackgroundColor))
-        .cornerRadius(8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 5)
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .position(position)
         .gesture(
             DragGesture()
@@ -74,10 +82,10 @@ struct DraggablePlayerPanel: View {
                     dragStart = .zero
                 }
         )
-        .onChange(of: autoArrangeTrigger) { _ in
+        .onChange(of: autoArrangeTrigger) {
             arrangePosition(in: containerSize)
         }
-        .onChange(of: containerSize) { newSize in
+        .onChange(of: containerSize) { _, newSize in
             arrangePosition(in: newSize)
         }
         .onAppear {

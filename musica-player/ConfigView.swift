@@ -182,8 +182,8 @@ struct ConfigView: View {
                         // Re-analyze BPM if a song is loaded
                         if let song = player.playlist.currentSong,
                            let url = song.accessibleURL() {
-                            url.startAccessingSecurityScopedResource()
-                            defer { url.stopAccessingSecurityScopedResource() }
+                            let hasAccess = url.startAccessingSecurityScopedResource()
+                            defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }
                             
                             if let file = try? AVAudioFile(forReading: url) {
                                 player.analyzeBPM(for: file)
@@ -309,7 +309,7 @@ struct ConfigView: View {
                 }
             }
             .padding()
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+            .background(.ultraThinMaterial.opacity(0.6))
             .cornerRadius(6)
             
             Divider()
@@ -412,7 +412,7 @@ struct ConfigView: View {
                 }
             }
             .padding()
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+            .background(.ultraThinMaterial.opacity(0.6))
             .cornerRadius(6)
             
             Divider()
@@ -553,11 +553,11 @@ struct ConfigView: View {
                 }
             }
             .padding()
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+            .background(.ultraThinMaterial.opacity(0.6))
             .cornerRadius(6)
         }
         .padding()
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(.thinMaterial)
         .cornerRadius(8)
         .frame(maxWidth: .infinity)
     }
@@ -646,7 +646,7 @@ struct ConfigView: View {
                 }
             }
             .padding()
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+            .background(.ultraThinMaterial.opacity(0.6))
             .cornerRadius(6)
             
             // Reverb
@@ -802,7 +802,7 @@ struct ConfigView: View {
             .cornerRadius(6)
         }
         .padding()
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(.thinMaterial)
         .cornerRadius(8)
         .frame(maxWidth: .infinity)
     }
@@ -1053,7 +1053,7 @@ struct ConfigView: View {
             .cornerRadius(6)
         }
         .padding()
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(.thinMaterial)
         .cornerRadius(8)
         .frame(maxWidth: .infinity)
     }
@@ -1068,3 +1068,4 @@ struct ConfigView: View {
     
     return ConfigView(player1: player1, player2: player2)
 }
+

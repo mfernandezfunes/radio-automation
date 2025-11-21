@@ -17,68 +17,73 @@ struct MainWindowView: View {
     @State private var showPlayer2: Bool = true
     
     var body: some View {
-        ZStack(alignment: .top) {
-            // Background
-            Color(NSColor.windowBackgroundColor)
-                .ignoresSafeArea()
+        ZStack {
+            LiquidGlassBackground()
             
-            // Status bar at top
-            VStack(spacing: 0) {
-                StatusBarView(
-                    onAutoArrange: {
-                        autoArrangeTrigger += 1
-                    },
-                    onOpenPlayer1: {
-                        // Toggle Player 1 panel visibility
-                        showPlayer1.toggle()
-                        if showPlayer1 {
-                            autoArrangeTrigger += 1
-                        }
-                    },
-                    onOpenPlayer2: {
-                        // Toggle Player 2 panel visibility
-                        showPlayer2.toggle()
-                        if showPlayer2 {
-                            autoArrangeTrigger += 1
-                        }
-                    },
-                    player1: player1,
-                    player2: player2
-                )
-                .zIndex(100)
+            ZStack(alignment: .top) {
+                // Background
+                Color.clear
+                    .background(.ultraThinMaterial)
+                    .ignoresSafeArea()
                 
-                // Container for draggable panels
-                GeometryReader { geometry in
-                    let visibleCount = (showPlayer1 ? 1 : 0) + (showPlayer2 ? 1 : 0)
+                // Status bar at top
+                VStack(spacing: 0) {
+                    StatusBarView(
+                        onAutoArrange: {
+                            autoArrangeTrigger += 1
+                        },
+                        onOpenPlayer1: {
+                            // Toggle Player 1 panel visibility
+                            showPlayer1.toggle()
+                            if showPlayer1 {
+                                autoArrangeTrigger += 1
+                            }
+                        },
+                        onOpenPlayer2: {
+                            // Toggle Player 2 panel visibility
+                            showPlayer2.toggle()
+                            if showPlayer2 {
+                                autoArrangeTrigger += 1
+                            }
+                        },
+                        player1: player1,
+                        player2: player2
+                    )
+                    .zIndex(100)
                     
-                    ZStack {
-                        // Player 1 panel
-                        if showPlayer1 {
-                            DraggablePlayerPanel(
-                                playerName: "Player 1",
-                                playlist: playlist1,
-                                player: player1,
-                                otherPlayer: player2,
-                                autoArrangeTrigger: $autoArrangeTrigger,
-                                containerSize: geometry.size,
-                                visiblePanels: visibleCount
-                            )
-                        }
+                    // Container for draggable panels
+                    GeometryReader { geometry in
+                        let visibleCount = (showPlayer1 ? 1 : 0) + (showPlayer2 ? 1 : 0)
                         
-                        // Player 2 panel
-                        if showPlayer2 {
-                            DraggablePlayerPanel(
-                                playerName: "Player 2",
-                                playlist: playlist2,
-                                player: player2,
-                                otherPlayer: player1,
-                                autoArrangeTrigger: $autoArrangeTrigger,
-                                containerSize: geometry.size,
-                                visiblePanels: visibleCount
-                            )
+                        ZStack {
+                            // Player 1 panel
+                            if showPlayer1 {
+                                DraggablePlayerPanel(
+                                    playerName: "Player 1",
+                                    playlist: playlist1,
+                                    player: player1,
+                                    otherPlayer: player2,
+                                    autoArrangeTrigger: $autoArrangeTrigger,
+                                    containerSize: geometry.size,
+                                    visiblePanels: visibleCount
+                                )
+                            }
+                            
+                            // Player 2 panel
+                            if showPlayer2 {
+                                DraggablePlayerPanel(
+                                    playerName: "Player 2",
+                                    playlist: playlist2,
+                                    player: player2,
+                                    otherPlayer: player1,
+                                    autoArrangeTrigger: $autoArrangeTrigger,
+                                    containerSize: geometry.size,
+                                    visiblePanels: visibleCount
+                                )
+                            }
                         }
+                        .frame(width: geometry.size.width, height: geometry.size.height)
                     }
-                    .frame(width: geometry.size.width, height: geometry.size.height)
                 }
             }
         }

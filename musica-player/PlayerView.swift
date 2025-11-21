@@ -28,7 +28,7 @@ struct PlayerView: View {
     // Computed property to check if next song should blink
     private var shouldBlinkNextSong: Bool {
         guard player.isPlaying,
-              let currentIndex = playlist.currentIndex,
+              playlist.currentIndex != nil,
               player.duration > 0 else {
             return false
         }
@@ -262,7 +262,7 @@ struct PlayerView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal)
                     .padding(.vertical, 6)
-                    .background(Color.orange.opacity(0.1))
+                    .background(Color.orange.opacity(0.15))
                     .cornerRadius(6)
                     .padding(.horizontal)
                     }
@@ -488,7 +488,7 @@ struct PlayerView: View {
                 .padding(.bottom, 8)
             }
             .padding()
-            .background(Color(NSColor.controlBackgroundColor))
+            .background(.thinMaterial)
             .fixedSize(horizontal: false, vertical: true)
             
             Divider()
@@ -510,7 +510,7 @@ struct PlayerView: View {
             }
             .padding(.horizontal)
             .padding(.vertical, 8)
-            .background(Color(NSColor.controlBackgroundColor))
+            .background(.thinMaterial)
             
             // Song list - takes all available space
             if playlist.songs.isEmpty {
@@ -784,7 +784,7 @@ struct PlayerView: View {
                             .animation(.easeInOut(duration: 0.5), value: blinkOpacity)
                             .background(
                                 playlist.currentIndex == index
-                                    ? Color.accentColor.opacity(0.15)
+                                    ? Color.accentColor.opacity(0.18)
                                     : Color.clear
                             )
                             .contentShape(Rectangle())
@@ -987,4 +987,3 @@ struct PlayerView: View {
     return PlayerView(playerName: "Player 1", playlist: playlist, player: player)
         .frame(width: 500, height: 700)
 }
-
