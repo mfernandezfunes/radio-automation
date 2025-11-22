@@ -495,7 +495,7 @@ struct PlayerView: View {
             
             // Header for playlist with add button
             HStack {
-                Text("Playlist")
+                Text("Radio Playout")
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .foregroundColor(.secondary)

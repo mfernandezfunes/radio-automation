@@ -15,7 +15,7 @@ class MusicPlayer: NSObject, ObservableObject {
     @Published var currentTime: TimeInterval = 0
     @Published var duration: TimeInterval = 0
     @Published var nextSongDuration: TimeInterval? = nil // Duration of preloaded next song
-    @Published var volume: Float = 0.5 {
+    @Published var volume: Float = 1.0 {
         didSet {
             playerNode.volume = volume
         }

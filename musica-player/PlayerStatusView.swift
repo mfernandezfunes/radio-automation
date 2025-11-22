@@ -13,14 +13,8 @@ struct PlayerStatusView: View {
     @ObservedObject var player: MusicPlayer
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Status indicator
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(player.isPlaying ? Color.green : (playlist.currentSong != nil ? Color.orange : Color.gray))
-                    .frame(width: 10, height: 10)
-            }
-            
+        VStack(alignment: .leading, spacing: 20) {
+           
             // Song title and artist
             if let song = playlist.currentSong {
                 VStack(alignment: .leading, spacing: 2) {
@@ -42,9 +36,14 @@ struct PlayerStatusView: View {
                         .lineLimit(1)
                 }
             } else {
-                Text("No song")
-                    .font(.subheadline)
+                Text("Title:")
+                    .font(.caption)
                     .foregroundColor(.secondary)
+                
+                Text("Artist:")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.top, 4)
             }
             
             // Time information

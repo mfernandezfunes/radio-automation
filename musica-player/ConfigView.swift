@@ -16,7 +16,7 @@ struct ConfigView: View {
         ScrollView {
             VStack(spacing: 20) {
                 // Title
-                Text("Configuración")
+                Text("Configuración Avanzada")
                     .font(.title)
                     .fontWeight(.bold)
                     .padding(.top)
@@ -146,7 +146,7 @@ struct ConfigView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text(String(format: "%.1f", player.vuMeterSensitivity))
+                    Text(String(format: "%.2f", player.vuMeterSensitivity))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -159,7 +159,7 @@ struct ConfigView: View {
                     Slider(value: Binding(
                         get: { player.vuMeterSensitivity },
                         set: { player.vuMeterSensitivity = $0 }
-                    ), in: 1.0...5.0)
+                    ), in: 1.0...1.3)
                     
                     Text("Alta")
                         .font(.caption2)
